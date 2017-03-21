@@ -1,0 +1,1083 @@
+diff -x .git -Naur Galois-2.2.1-prepatch/.patched Galois-2.2.1/.patched
+--- Galois-2.2.1-prepatch/.patched	1970-01-01 01:00:00.000000000 +0100
++++ Galois-2.2.1/.patched	2017-03-21 21:04:32.000000000 +0000
+@@ -0,0 +1 @@
++patched
+diff -x .git -Naur Galois-2.2.1-prepatch/CMakeLists.txt Galois-2.2.1/CMakeLists.txt
+--- Galois-2.2.1-prepatch/CMakeLists.txt	2014-02-27 20:03:49.000000000 +0000
++++ Galois-2.2.1/CMakeLists.txt	2017-03-21 15:18:19.000000000 +0000
+@@ -13,6 +13,7 @@
+ endif()
+ 
+ ###### Options (alternatively pass as options to cmake -DName=Value) ######
++set(USE_HWTOPO ON CACHE BOOL "Enable hardware topology mapping for threads")
+ set(USE_GPROF OFF CACHE BOOL "Enable GCC profiling")
+ set(USE_VTUNE OFF CACHE BOOL "Use VTune for profiling")
+ set(USE_PAPI OFF CACHE BOOL "Use PAPI counters for profiling")
+@@ -21,11 +22,18 @@
+ set(USE_LONGJMP ON CACHE BOOL "Use longjmp instead of exceptions to signal aborts")
+ set(INSTALL_APPS OFF CACHE BOOL "Install apps as well as library")
+ set(SKIP_COMPILE_APPS OFF CACHE BOOL "Skip compilation of applications using Galois library")
++set(USE_TINYSTM OFF CACHE BOOL "Use tinySTM library")
++set(USE_TINYSTM_XTM OFF CACHE BOOL "Use XTM library")
++set(TINYSTM_CMAKE_EXPORT "" CACHE STRING "Path to tinystm cmake exports")
++set(USE_NO_WORKSTEALING OFF CACHE BOOL "Disable workstealing")
++set(USE_ABORT_POLICY_BOUNDED OFF CACHE BOOL "")
++set(USE_ABORT_POLICY_EAGER OFF CACHE BOOL "")
++set(USE_ABORT_POLICY_DOUBLE OFF CACHE BOOL "")
+ 
+ set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
+ set(INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")
+ set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
+-set(INSTALL_CMAKE_DIR lib/cmake/Galois CACHE PATH "Installation directory for CMake files")
++set(INSTALL_CMAKE_DIR cmake/Galois CACHE PATH "Installation directory for CMake files")
+ # Make relative paths absolute
+ foreach(p LIB BIN INCLUDE CMAKE)
+   set(var INSTALL_${p}_DIR)
+@@ -86,6 +94,7 @@
+     message(FATAL_ERROR "XLC must be higher than 12.0")
+   endif()
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -qsuppress=1540-0724 -qsuppress=1500-029 -qmaxmem=-1 -qalias=noansi -qsmp=omp")
++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -qalias=noansi -qsmp=omp")
+ endif()
+ 
+ # check for incompatible GCC
+@@ -138,7 +147,7 @@
+ 
+ # Experimental features
+ if(USE_EXP)
+-  set(USE_VTUNE ON)
++  #set(USE_VTUNE ON)
+   add_definitions(-DGALOIS_USE_EXP)
+   include_directories("exp/include")
+ 
+@@ -157,17 +166,6 @@
+     set(GALOIS_USE_SVNVERSION on)
+   endif()
+ 
+-  if(USE_HTM)
+-    if(CMAKE_CXX_COMPILER_ID MATCHES "XL")
+-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -qtm -qsmp=speculative")
+-      set(GALOIS_USE_HTM on)
+-      set(GALOIS_USE_SEQ_ONLY on)
+-      set(GALOIS_USE_LONGJMP on)
+-    else()
+-      message(FATAL_ERROR "Hardware transactional memory not supported")
+-    endif()
+-  endif()
+-
+   # Experimental Deterministic features
+   if(USE_DET_INORDER)
+     add_definitions(-DGALOIS_USE_DET_INORDER)
+@@ -177,6 +175,36 @@
+   endif()
+ endif()
+ 
++if(USE_HTM)
++  if(CMAKE_CXX_COMPILER_ID MATCHES "XL")
++    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -qtm -qsmp=speculative")
++    set(GALOIS_USE_HTM on)
++    set(GALOIS_USE_SEQ_ONLY on)
++    set(GALOIS_USE_LONGJMP on)
++  else()
++    message(FATAL_ERROR "Hardware transactional memory not supported")
++  endif()
++endif()
++
++if(USE_NO_WORKSTEALING)
++  set(GALOIS_USE_NO_WORKSTEALING on)
++endif()
++if(USE_ABORT_POLICY_BOUNDED)
++  set(GALOIS_USE_ABORT_POLICY_BOUNDED on)
++endif()
++if(USE_ABORT_POLICY_EAGER)
++  set(GALOIS_USE_ABORT_POLICY_EAGER on)
++endif()
++if(USE_ABORT_POLICY_DOUBLE)
++  set(GALOIS_USE_ABORT_POLICY_DOUBLE on)
++endif()
++
++if(USE_TINYSTM)
++  set(GALOIS_USE_TINYSTM on)
++  set(CMAKE_PREFIX_PATH ${TINYSTM_CMAKE_EXPORT} ${CMAKE_PREFIX_PATH})
++  find_package(tinystm REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
++endif()
++
+ # PThreads
+ find_package(Threads REQUIRED)
+ 
+@@ -268,7 +296,6 @@
+ ###### Source finding ######
+ include_directories(include)
+ 
+-add_subdirectory(lib)
+ add_subdirectory(src)
+ add_subdirectory(tools)
+ add_subdirectory(scripts)
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/Runtime/Context.h Galois-2.2.1/include/Galois/Runtime/Context.h
+--- Galois-2.2.1-prepatch/include/Galois/Runtime/Context.h	2014-02-27 19:56:22.000000000 +0000
++++ Galois-2.2.1/include/Galois/Runtime/Context.h	2017-03-20 11:07:57.000000000 +0000
+@@ -27,6 +27,7 @@
+ 
+ #include "Galois/config.h"
+ #include "Galois/MethodFlags.h"
++#include "Galois/Runtime/Stm.h"
+ #include "Galois/Runtime/ll/PtrLock.h"
+ #include "Galois/Runtime/ll/gio.h"
+ 
+@@ -78,6 +79,7 @@
+   void releaseAll();
+ };
+ void clearReleasable();
++void applyReleasable();
+ #else
+ class Releasable {
+ public:
+@@ -85,6 +87,7 @@
+   virtual void release() = 0;
+ };
+ static inline void clearReleasable() { }
++static inline void applyReleasable() { }
+ #endif
+ 
+ class LockManagerBase; 
+@@ -104,10 +107,10 @@
+   void release (Lockable* lockable) {}
+   static bool tryLock(Lockable* lockable) { return false; }
+   static LockManagerBase* getOwner(Lockable* lockable) { return 0; }
+-
+ };
+ 
+ class SimpleRuntimeContext: public LockManagerBase {
++  friend void doAcquire(Lockable*);
+ protected:
+   void acquire(Lockable* lockable) { }
+   void release (Lockable* lockable) {}
+@@ -123,6 +126,81 @@
+   unsigned cancelIteration() { return 0; }
+   unsigned commitIteration() { return 0; }
+ };
++#elif defined(GALOIS_USE_TINYSTM)
++class SimpleRuntimeContext;
++
++class Lockable { 
++  XTM_DECL_LOCKABLE(SimpleRuntimeContext*, owner);
++  XTM_DECL_LOCKABLE(Lockable*, next);
++  friend class SimpleRuntimeContext;
++public:
++  Lockable() {
++    XTM_LOCKABLE_VALUE(owner) = 0;
++    XTM_LOCKABLE_INIT(owner);
++    XTM_LOCKABLE_VALUE(next) = 0;
++    XTM_LOCKABLE_INIT(next);
++  }
++};
++
++class SimpleRuntimeContext: private boost::noncopyable {
++  XTM_DECL_LOCKABLE(Lockable*, locks);
++protected:
++  virtual void subAcquire(Lockable* lockable);
++  int tryAcquire(Lockable* lockable) {abort(); return 0; }
++  void insertLockable(Lockable* lockable) { 
++    GALOIS_STM_WRITE_PTR(lockable->next, XTM_LOCKABLE_VALUE(locks));
++    GALOIS_STM_WRITE_PTR(locks, lockable);
++  }
++  static bool tryLock(Lockable* lockable) { abort(); return false; }
++  bool tryLockOwner(Lockable* lockable) { abort(); return false; }
++  bool stealingCasOwner(Lockable* lockable, SimpleRuntimeContext* other) { abort(); return false; }
++  void setOwner(Lockable* lockable) { abort(); }
++  SimpleRuntimeContext* getOwner(Lockable* lockable) { abort(); return 0; }
++
++public:
++  SimpleRuntimeContext(bool child = false) { 
++    if (child) abort(); 
++    XTM_LOCKABLE_VALUE(locks) = 0;
++    XTM_LOCKABLE_INIT(locks);
++  }
++  virtual ~SimpleRuntimeContext() { }
++  void startIteration() { }
++  
++  unsigned cancelIteration() { return commitIteration(); }
++  unsigned commitIteration() { 
++    unsigned numLocks = 0;
++    Lockable* L;
++    // XXX(ddn): Hack to allow committing/aborting outside a tinySTM transaction 
++    if (!XTM_LOCKABLE_VALUE(locks))
++      return 0;
++    
++    while ((L = (Lockable*) GALOIS_STM_READ_PTR(locks))) {
++      GALOIS_STM_WRITE_PTR(locks, XTM_LOCKABLE_VALUE(L->next));
++      GALOIS_STM_WRITE_PTR(L->next, 0);
++      //SimpleRuntimeContext* other = (SimpleRuntimeContext*) GALOIS_STM_READ_PTR(L->owner);
++      //if (other != this)
++      //  GALOIS_DIE("Releasing not me! ", other);
++      GALOIS_STM_WRITE_PTR(L->owner, 0);
++      ++numLocks;
++    }
++
++    return numLocks;
++  }
++  
++  void acquire(Lockable* lockable) { 
++    SimpleRuntimeContext* other = (SimpleRuntimeContext*) GALOIS_STM_READ_PTR(lockable->owner);
++    if (other == 0) {
++      GALOIS_STM_WRITE_PTR(lockable->owner, this);
++      insertLockable(lockable);
++    } else if (other == this) {
++      return;
++    } else {
++      GALOIS_STM_WRITE_PTR(lockable->owner, this);
++      insertLockable(lockable);
++    }
++  }
++};
++
+ #else
+ /**
+  * All objects that may be locked (nodes primarily) must inherit from
+@@ -148,29 +226,29 @@
+   AcquireStatus tryAcquire(Lockable* lockable);
+ 
+   inline bool stealByCAS(Lockable* lockable, LockManagerBase* other) {
+-    assert(lockable != nullptr);
++    assert(lockable != NULL);
+     return lockable->owner.stealing_CAS(other, this);
+   }
+ 
+   inline void ownByForce(Lockable* lockable) {
+-    assert(lockable != nullptr);
++    assert(lockable != NULL);
+     assert(!lockable->owner.getValue());
+     lockable->owner.setValue(this);
+   }
+ 
+   inline void release(Lockable* lockable) {
+-    assert(lockable != nullptr);
++    assert(lockable != NULL);
+     assert(getOwner(lockable) == this);
+     lockable->owner.unlock_and_clear();
+   }
+ 
+   inline static bool tryLock(Lockable* lockable) {
+-    assert(lockable != nullptr);
++    assert(lockable != NULL);
+     return lockable->owner.try_lock();
+   }
+ 
+   inline static LockManagerBase* getOwner(Lockable* lockable) {
+-    assert(lockable != nullptr);
++    assert(lockable != NULL);
+     return lockable->owner.getValue();
+   }
+ };
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/Runtime/ParallelWork.h Galois-2.2.1/include/Galois/Runtime/ParallelWork.h
+--- Galois-2.2.1-prepatch/include/Galois/Runtime/ParallelWork.h	2014-02-27 19:56:21.000000000 +0000
++++ Galois-2.2.1/include/Galois/Runtime/ParallelWork.h	2017-03-20 11:07:57.000000000 +0000
+@@ -28,18 +28,23 @@
+ #ifndef GALOIS_RUNTIME_PARALLELWORK_H
+ #define GALOIS_RUNTIME_PARALLELWORK_H
+ 
++#include "Galois/config.h"
+ #include "Galois/Mem.h"
+ #include "Galois/Statistic.h"
+ #include "Galois/Runtime/Barrier.h"
+ #include "Galois/Runtime/Context.h"
+ #include "Galois/Runtime/ForEachTraits.h"
+ #include "Galois/Runtime/Range.h"
++#include "Galois/Runtime/Stm.h"
+ #include "Galois/Runtime/Support.h"
+ #include "Galois/Runtime/Termination.h"
+ #include "Galois/Runtime/ThreadPool.h"
+ #include "Galois/Runtime/UserContextAccess.h"
+ #include "Galois/WorkList/GFifo.h"
++#include "Galois/WorkList/LocalQueue.h"
+ 
++#include GALOIS_CXX11_STD_HEADER(utility)
++#include GALOIS_CXX11_STD_HEADER(type_traits)
+ #include <algorithm>
+ #include <functional>
+ 
+@@ -122,8 +127,11 @@
+ class AbortHandler {
+   struct Item { value_type val; int retries; };
+ 
++  typedef typename WorkList::GFIFO<Item>::template rethread<false>::type LocalAbortedList;
+   typedef WorkList::GFIFO<Item> AbortedList;
++
+   PerThreadStorage<AbortedList> queues;
++  PerThreadStorage<LocalAbortedList> localQueues;
+   bool useBasicPolicy;
+   
+   /**
+@@ -136,15 +144,14 @@
+   }
+ 
+   /**
+-   * Policy: retry work 2X locally, then serialize via tree on package (trying
++   * Policy: try work 2X locally, then serialize via tree on package (trying
+    * twice at each level), then serialize via tree over packages.
+    */
+   void doublePolicy(const Item& item) {
+-    int retries = item.retries - 1;
+-    if ((retries & 1) == 1) {
+-      queues.getLocal()->push(item);
++    if ((item.retries & 7) != 7) {
++      localQueues.getLocal()->push(item);
+       return;
+-    } 
++    }
+     
+     unsigned tid = LL::getTID();
+     unsigned package = LL::getPackageForSelf(tid);
+@@ -158,20 +165,19 @@
+   }
+ 
+   /**
+-   * Policy: retry work 2X locally, then serialize via tree on package but
++   * Policy: try work 3X locally, then serialize via tree on package but
+    * try at most 3 levels, then serialize via tree over packages.
+    */
+   void boundedPolicy(const Item& item) {
+-    int retries = item.retries - 1;
+-    if (retries < 2) {
+-      queues.getLocal()->push(item);
++    if (item.retries < 2) {
++      localQueues.getLocal()->push(item);
+       return;
+     } 
+     
+     unsigned tid = LL::getTID();
+     unsigned package = LL::getPackageForSelf(tid);
+     unsigned leader = LL::getLeaderForPackage(package);
+-    if (retries < 5 && tid != leader) {
++    if (item.retries < 5 && tid != leader) {
+       unsigned next = leader + (tid - leader) / 2;
+       queues.getRemote(next)->push(item);
+     } else {
+@@ -183,39 +189,55 @@
+    * Retry locally only.
+    */
+   void eagerPolicy(const Item& item) {
+-    queues.getLocal()->push(item);
++    localQueues.getLocal()->push(item);
+   }
+ 
+ public:
+   AbortHandler() {
+     // XXX(ddn): Implement smarter adaptive policy
+-    useBasicPolicy = LL::getMaxPackages() > 2;
++    //useBasicPolicy = LL::getMaxPackages() > 2;
++    useBasicPolicy = false;
+   }
+ 
+   value_type& value(Item& item) const { return item.val; }
+   value_type& value(value_type& val) const { return val; }
+ 
+   void push(const value_type& val) {
+-    Item item = { val, 1 };
+-    queues.getLocal()->push(item);
++    Item item = { val, 0 };
++    localQueues.getLocal()->push(item);
+   }
+ 
+   void push(const Item& item) {
+     Item newitem = { item.val, item.retries + 1 };
+-    if (useBasicPolicy)
++#if defined(GALOIS_USE_ABORT_POLICY_BOUNDED)
++#  error "Not supported"
++    boundedPolicy(newitem);
++#elif defined(GALOIS_USE_ABORT_POLICY_EAGER)
++    eagerPolicy(newitem);
++#elif defined(GALOIS_USE_ABORT_POLICY_DOUBLE)
++    doublePolicy(newitem);
++#else
++    if (useBasicPolicy) {
+       basicPolicy(newitem);
+-    else
+-      doublePolicy(newitem);
++      return;
++    }
++    doublePolicy(newitem);
++#endif
+   }
+ 
+   AbortedList* getQueue() { return queues.getLocal(); }
++  LocalAbortedList* getLocalQueue() { return localQueues.getLocal(); }
+ };
+ 
+ template<class WorkListTy, class T, class FunctionTy>
+ class ForEachWork {
+ protected:
+   typedef T value_type;
++#ifdef GALOIS_USE_NO_WORKSTEALING
++  typedef typename WorkList::LocalQueue<>::template with_local<WorkList::GFIFO<> >::type::template retype<value_type>::type WLTy;
++#else
+   typedef typename WorkListTy::template retype<value_type>::type WLTy;
++#endif
+ 
+   struct ThreadLocalData {
+     FunctionTy function;
+@@ -266,31 +288,65 @@
+       tld.facing.resetAlloc();
+   }
+ 
+-#ifdef GALOIS_USE_HTM
+-# ifndef GALOIS_USE_LONGJMP
+-#  error "HTM must be used with GALOIS_USE_LONGJMP"
+-# endif
+-#endif
+-
+   inline void doProcess(value_type& val, ThreadLocalData& tld) {
++#ifdef GALOIS_USE_TINYSTM
++    // GCC 4.7, XLC optimize this variable away even in presence of setjmp
++    // make volatile to prevent this
++    volatile bool first = true;
++    LL::compilerBarrier();
++#endif
+     tld.stat.inc_iterations();
++    // NB: STM transaction needs to include committing iteration
+     if (ForEachTraits<FunctionTy>::NeedsAborts)
+       tld.ctx.startIteration();
+ 
++    GALOIS_STM_BEGIN();
++
++#ifdef GALOIS_USE_TINYSTM
++    if (ForEachTraits<FunctionTy>::NeedsPush) {
++      tld.facing.resetPushBuffer();
++    }
++    if (first)
++      first = false;
++    else {
++#  ifndef GALOIS_USE_ABORT_POLICY_EAGER
++      abortIteration(val, tld);
++      GALOIS_STM_END();
++      forceAbort();
++#  endif
++    }
++#endif
++
+ #ifdef GALOIS_USE_HTM
+-# ifndef GALOIS_USE_LONGJMP
+-#  error "HTM must be used with GALOIS_USE_LONGJMP"
+-# endif
+-#pragma tm_atomic
+-    {
++#  ifndef GALOIS_USE_LONGJMP
++#    error "HTM must be used with GALOIS_USE_LONGJMP"
++#  endif
++#  pragma tm_atomic
+ #endif
++    {
+       tld.function(val, tld.facing.data());
+-#ifdef GALOIS_USE_HTM
+     }
+-#endif
+ 
+     clearReleasable();
++#ifdef GALOIS_USE_TINYSTM
++    // need to inline commit iteration to form correct tinySTM transaction
++    if (ForEachTraits<FunctionTy>::NeedsAborts)
++      tld.ctx.commitIteration();
++    GALOIS_STM_END();
++    if (ForEachTraits<FunctionTy>::NeedsPush) {
++      auto ii = tld.facing.getPushBuffer().begin();
++      auto ee = tld.facing.getPushBuffer().end();
++      if (ii != ee) {
++	wl.push(ii, ee);
++	tld.facing.resetPushBuffer();
++      }
++    }
++    if (ForEachTraits<FunctionTy>::NeedsPIA)
++      tld.facing.resetAlloc();
++#else
+     commitIteration(tld);
++    GALOIS_STM_END();
++#endif
+   }
+ 
+   bool runQueueSimple(ThreadLocalData& tld) {
+@@ -307,6 +363,9 @@
+ 
+   template<int limit, typename WL>
+   bool runQueue(ThreadLocalData& tld, WL& lwl) {
++#ifdef GALOIS_USE_LONGJMP
++    volatile 
++#endif
+     bool workHappened = false;
+     Galois::optional<typename WL::value_type> p = lwl.pop();
+     unsigned num = 0;
+@@ -343,7 +402,10 @@
+     case 0:
+       break;
+     case CONFLICT:
++#ifndef GALOIS_USE_TINYSTM
++      // Handled inside 
+       abortIteration(*p, tld);
++#endif
+       break;
+     default:
+       GALOIS_DIE("unknown conflict type");
+@@ -353,7 +415,14 @@
+ 
+   GALOIS_ATTRIBUTE_NOINLINE
+   bool handleAborts(ThreadLocalData& tld) {
+-    return runQueue<0>(tld, *aborted.getQueue());
++    bool workHappened = false;
++    while (runQueue<0>(tld, *aborted.getLocalQueue()))
++      workHappened = true;
++#ifndef GALOIS_USE_ABORT_POLICY_EAGER
++    if (runQueue<0>(tld, *aborted.getQueue()))
++      workHappened = true;
++#endif
++    return workHappened;
+   }
+ 
+   void fastPushBack(typename UserContextAccess<value_type>::PushBufferTy& x) {
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/Runtime/Stm.h Galois-2.2.1/include/Galois/Runtime/Stm.h
+--- Galois-2.2.1-prepatch/include/Galois/Runtime/Stm.h	1970-01-01 01:00:00.000000000 +0100
++++ Galois-2.2.1/include/Galois/Runtime/Stm.h	2017-03-20 11:07:57.000000000 +0000
+@@ -0,0 +1,84 @@
++#ifndef GALOIS_RUNTIME_STM_H
++#define GALOIS_RUNTIME_STM_H
++
++#include "Galois/config.h"
++
++#ifdef GALOIS_USE_TINYSTM
++#include "Galois/Runtime/Support.h"
++#include <stm.h>
++#include <mod_stats.h>
++#include <mod_mem.h>
++#include <wrappers.h>
++#endif
++
++#ifndef XTM_DECL_LOCKABLE
++#  define XTM_DECL_LOCKABLE(type, name) type name
++#  define XTM_LOCKABLE_VALUE(expr) (expr)
++#  define XTM_LOCKABLE_INIT(expr) 
++#endif
++
++namespace Galois {
++namespace Runtime {
++namespace Stm {
++
++void stm_on_abort(void *arg);
++
++#ifdef GALOIS_USE_TINYSTM
++static inline void start() {
++  stm_init();
++  mod_mem_init(0);
++  mod_stats_init();
++  if (stm_register(NULL, NULL, NULL, NULL, NULL, stm_on_abort, NULL) == 0)
++    abort();
++}
++
++static inline void stop() {
++  unsigned long commits = 0;
++  unsigned long aborts = 0;
++  unsigned long retries = 0;
++  stm_get_global_stats("global_nb_commits", &commits);
++  stm_get_global_stats("global_nb_aborts", &aborts);
++  stm_get_global_stats("global_max_retries", &retries);
++  printf("STAT,(NULL),TinySTMCommits,1,%lu,%lu\n", commits, commits);
++  printf("STAT,(NULL),TinySTMAborts,1,%lu,%lu\n", aborts, aborts);
++  printf("STAT,(NULL),TinySTMRetries,1,%lu,%lu\n", retries, retries);
++  stm_exit();
++}
++
++static inline void threadEnter() {
++  stm_init_thread();
++}
++
++static inline void threadExit() {
++  stm_exit_thread();
++}
++
++#  define GALOIS_STM_BEGIN() do { \
++  stm_tx_attr_t _a; \
++  _a.attrs = 0; \
++  sigjmp_buf *_e = stm_start(_a); \
++  if (_e != NULL) sigsetjmp(*_e, 0); \
++} while (0)
++
++#  define GALOIS_STM_END() stm_commit()
++#  define GALOIS_STM_READ_WORD(var) stm_load((volatile stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var))
++#  define GALOIS_STM_READ_PTR(var) stm_load_ptr((volatile void**)(void*)&XTM_LOCKABLE_VALUE(var))
++#  define GALOIS_STM_WRITE_WORD(var, val) stm_store((volatile stm_word_t*)(void*)&XTM_LOCKABLE_VALUE(var), (stm_word_t)val)
++#  define GALOIS_STM_WRITE_PTR(var, val) stm_store_ptr((volatile void**)(void*)&XTM_LOCKABLE_VALUE(var), val)
++#else
++static inline void start() { }
++static inline void stop() { }
++static inline void threadEnter() { }
++static inline void threadExit() { }
++#  define GALOIS_STM_BEGIN()
++#  define GALOIS_STM_END()
++#  define GALOIS_STM_READ_WORD(var) (var)
++#  define GALOIS_STM_READ_PTR(var) (var)
++#  define GALOIS_STM_WRITE_WORD(var, val) do { var = val; } while (0)
++#  define GALOIS_STM_WRITE_PTR(var, val) do { var = val; } while (0)
++#endif
++}
++}
++}
++
++#endif
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/Runtime/Termination.h Galois-2.2.1/include/Galois/Runtime/Termination.h
+--- Galois-2.2.1-prepatch/include/Galois/Runtime/Termination.h	2014-02-27 19:56:21.000000000 +0000
++++ Galois-2.2.1/include/Galois/Runtime/Termination.h	2017-03-20 11:07:57.000000000 +0000
+@@ -30,15 +30,18 @@
+ #ifndef GALOIS_RUNTIME_TERMINATION_H
+ #define GALOIS_RUNTIME_TERMINATION_H
+ 
++#include "Galois/config.h"
+ #include "Galois/Runtime/PerThreadStorage.h"
+ #include "Galois/Runtime/ll/CacheLineStorage.h"
+ 
++#include GALOIS_CXX11_STD_HEADER(atomic)
++
+ namespace Galois {
+ namespace Runtime {
+ 
+ class TerminationDetection {
+ protected:
+-  LL::CacheLineStorage<volatile bool> globalTerm;
++  LL::CacheLineStorage<std::atomic<int> > globalTerm;
+ public:
+   /**
+    * Initializes the per-thread state.  All threads must call this
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/Runtime/mm/Mem.h Galois-2.2.1/include/Galois/Runtime/mm/Mem.h
+--- Galois-2.2.1-prepatch/include/Galois/Runtime/mm/Mem.h	2014-02-27 19:56:21.000000000 +0000
++++ Galois-2.2.1/include/Galois/Runtime/mm/Mem.h	2017-03-20 11:07:57.000000000 +0000
+@@ -387,12 +387,28 @@
+     head = BP;
+     offset = sizeof(Block);
+   }
++
+ public:
++  struct Mark { Block* head; int offset; };
++
+   enum { AllocSize = 0 };
+ 
+-  SimpleBumpPtr(): SourceHeap(), head(0), offset(0) {}
+-  ~SimpleBumpPtr() {
+-    clear();
++  SimpleBumpPtr(): SourceHeap(), head(0), offset(0) { }
++  
++  ~SimpleBumpPtr() { clear(); }
++
++  Mark getMark() {
++    Mark m = { head, offset };
++    return m;
++  }
++
++  void clearToMark(const Mark& mark) {
++    while (head != mark.head) {
++      Block* B = head;
++      head = B->next;
++      SourceHeap::deallocate(B);
++    }
++    offset = mark.offset;
+   }
+ 
+   void clear() {
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/WorkList/LocalQueue.h Galois-2.2.1/include/Galois/WorkList/LocalQueue.h
+--- Galois-2.2.1-prepatch/include/Galois/WorkList/LocalQueue.h	2014-02-27 19:56:24.000000000 +0000
++++ Galois-2.2.1/include/Galois/WorkList/LocalQueue.h	2017-03-20 11:07:57.000000000 +0000
+@@ -24,6 +24,7 @@
+ #define GALOIS_WORKLIST_LOCALQUEUE_H
+ 
+ #include "Galois/config.h"
++#include "Galois/WorkList/Fifo.h"
+ #include <boost/mpl/if.hpp>
+ #include GALOIS_CXX11_STD_HEADER(type_traits)
+ 
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/c++11-compat/mutex.h Galois-2.2.1/include/Galois/c++11-compat/mutex.h
+--- Galois-2.2.1-prepatch/include/Galois/c++11-compat/mutex.h	2014-02-27 19:56:18.000000000 +0000
++++ Galois-2.2.1/include/Galois/c++11-compat/mutex.h	2017-03-20 11:07:57.000000000 +0000
+@@ -1,6 +1,8 @@
+ #ifndef GALOIS_C__11_COMPAT_MUTEX_H
+ #define GALOIS_C__11_COMPAT_MUTEX_H
+ 
++#include "tuple.h"
++
+ namespace std {
+ template<typename _Mutex>
+ class lock_guard {
+@@ -15,5 +17,54 @@
+ 
+   mutex_type& _M_device;
+ };
++
++template<int _Idx>
++struct __unlock_impl {
++  template<typename... _Lock>
++  static void __do_unlock(tuple<_Lock&...>& __locks) {
++      std::get<_Idx>(__locks).unlock();
++      __unlock_impl<_Idx - 1>::__do_unlock(__locks);
++  }
++};
++
++template<>
++struct __unlock_impl<-1> {
++  template<typename... _Lock>
++  static void __do_unlock(tuple<_Lock&...>&) { }
++};
++
++template<int _Idx, bool _Continue = true>
++struct __try_lock_impl {
++  template<typename... _Lock>
++  static int __do_try_lock(tuple<_Lock&...>& __locks) {
++    if (std::get<_Idx>(__locks).try_lock()) {
++      return __try_lock_impl<_Idx + 1,
++        _Idx + 2 < sizeof...(_Lock)>::__do_try_lock(__locks);
++    } else {
++      __unlock_impl<_Idx>::__do_unlock(__locks);
++      return _Idx;
++    }
++  }
++};
++
++template<int _Idx>
++struct __try_lock_impl<_Idx, false> {
++  template<typename... _Lock>
++  static int __do_try_lock(tuple<_Lock&...>& __locks) {
++    if (std::get<_Idx>(__locks).try_lock())
++      return -1;
++    else {
++      __unlock_impl<_Idx>::__do_unlock(__locks);
++      return _Idx;
++    }
++  }
++};
++
++
++template<typename _Lock1, typename _Lock2, typename... _Lock3>
++int try_lock(_Lock1& __l1, _Lock2& __l2, _Lock3&... __l3) {
++  tuple<_Lock1&, _Lock2&, _Lock3&...> __locks(__l1, __l2, __l3...);
++  return __try_lock_impl<0>::__do_try_lock(__locks);
++}
+ }
+ #endif
+diff -x .git -Naur Galois-2.2.1-prepatch/include/Galois/config.h.in Galois-2.2.1/include/Galois/config.h.in
+--- Galois-2.2.1-prepatch/include/Galois/config.h.in	2014-02-27 19:56:23.000000000 +0000
++++ Galois-2.2.1/include/Galois/config.h.in	2017-03-20 11:07:57.000000000 +0000
+@@ -23,6 +23,12 @@
+ #cmakedefine GALOIS_USE_SEQ_ONLY
+ #cmakedefine GALOIS_USE_CXX11_COMPAT
+ #cmakedefine GALOIS_USE_LONGJMP
++#cmakedefine GALOIS_USE_TINYSTM
++#cmakedefine GALOIS_USE_XTM_INLINE_LOCKABLE
++#cmakedefine GALOIS_USE_NO_WORKSTEALING
++#cmakedefine GALOIS_USE_ABORT_POLICY_BOUNDED
++#cmakedefine GALOIS_USE_ABORT_POLICY_EAGER
++#cmakedefine GALOIS_USE_ABORT_POLICY_DOUBLE
+ 
+ #ifdef GALOIS_USE_CXX11_COMPAT
+ #define GALOIS_CXX11_STD_HEADER(name) <Galois/c++11-compat/name.h>
+diff -x .git -Naur Galois-2.2.1-prepatch/src/CMakeLists.txt Galois-2.2.1/src/CMakeLists.txt
+--- Galois-2.2.1-prepatch/src/CMakeLists.txt	2014-02-27 19:56:28.000000000 +0000
++++ Galois-2.2.1/src/CMakeLists.txt	2017-03-21 10:42:05.000000000 +0000
+@@ -1,5 +1,6 @@
+ set(sources Barrier.cpp Context.cpp FileGraph.cpp FileGraphParallel.cpp
+   OCFileGraph.cpp PerThreadStorage.cpp PreAlloc.cpp Sampling.cpp Support.cpp
++  Stm.cpp
+   Termination.cpp Threads.cpp ThreadPool_pthread.cpp Timer.cpp)
+ set(include_dirs "${PROJECT_SOURCE_DIR}/include/")
+ if(USE_EXP)
+@@ -56,6 +57,11 @@
+ 
+ target_link_libraries(galois ${CMAKE_THREAD_LIBS_INIT})
+ 
++if(USE_TINYSTM)
++
++  target_link_libraries(galois tinystm)
++endif()
++
+ if(NUMA_FOUND)
+   target_link_libraries(galois ${NUMA_LIBRARIES})
+ endif()
+diff -x .git -Naur Galois-2.2.1-prepatch/src/Context.cpp Galois-2.2.1/src/Context.cpp
+--- Galois-2.2.1-prepatch/src/Context.cpp	2014-02-27 19:56:27.000000000 +0000
++++ Galois-2.2.1/src/Context.cpp	2017-03-20 11:07:57.000000000 +0000
+@@ -53,6 +53,11 @@
+ void Galois::Runtime::clearReleasable() {
+   releasableHead = 0;
+ }
++
++void Galois::Runtime::applyReleasable() {
++  if (releasableHead) releasableHead->releaseAll();
++}
++
+ #endif
+ 
+ //! Global thread context for each active thread
+@@ -80,7 +85,7 @@
+ void Galois::Runtime::doCheckWrite() {
+   if (Galois::Runtime::getPending() == Galois::Runtime::PENDING) {
+ #ifdef GALOIS_USE_LONGJMP
+-    if (releasableHead) releasableHead->releaseAll();
++    applyReleasable();
+     longjmp(hackjmp, Galois::Runtime::REACHED_FAILSAFE);
+ #else
+     throw Galois::Runtime::REACHED_FAILSAFE;
+@@ -98,7 +103,7 @@
+ 
+ void Galois::Runtime::signalConflict(Lockable* lockable) {
+ #ifdef GALOIS_USE_LONGJMP
+-  if (releasableHead) releasableHead->releaseAll();
++  applyReleasable();
+   longjmp(hackjmp, Galois::Runtime::CONFLICT);
+ #else
+   throw Galois::Runtime::CONFLICT; // Conflict
+@@ -113,10 +118,8 @@
+ // LockManagerBase & SimpleRuntimeContext
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+-#if !defined(GALOIS_USE_SEQ_ONLY)
+-Galois::Runtime::LockManagerBase::AcquireStatus
+-Galois::Runtime::LockManagerBase::tryAcquire(Galois::Runtime::Lockable* lockable) 
+-{
++#if !defined(GALOIS_USE_SEQ_ONLY) && !defined(GALOIS_USE_TINYSTM)
++Galois::Runtime::LockManagerBase::AcquireStatus Galois::Runtime::LockManagerBase::tryAcquire(Galois::Runtime::Lockable* lockable) {
+   assert(lockable);
+   // XXX(ddn): Hand inlining this code makes a difference on 
+   // delaunaytriangulation (GCC 4.7.2)
+diff -x .git -Naur Galois-2.2.1-prepatch/src/PerThreadStorage.cpp Galois-2.2.1/src/PerThreadStorage.cpp
+--- Galois-2.2.1-prepatch/src/PerThreadStorage.cpp	2014-02-27 19:56:26.000000000 +0000
++++ Galois-2.2.1/src/PerThreadStorage.cpp	2017-03-20 11:07:57.000000000 +0000
+@@ -56,7 +56,7 @@
+ 
+ unsigned Galois::Runtime::PerBackend::nextLog2(unsigned size) {
+   unsigned i = MIN_SIZE;
+-  while ((1<<i) < size) {
++  while ((1U<<i) < size) {
+     ++i;
+   }
+   if (i >= MAX_SIZE) { 
+diff -x .git -Naur Galois-2.2.1-prepatch/src/Sampling.cpp Galois-2.2.1/src/Sampling.cpp
+--- Galois-2.2.1-prepatch/src/Sampling.cpp	2014-02-27 19:56:26.000000000 +0000
++++ Galois-2.2.1/src/Sampling.cpp	2017-03-20 11:07:57.000000000 +0000
+@@ -98,17 +98,18 @@
+ #include <papiStdEventDefs.h>
+ }
+ #include <iostream>
++#include <string.h>
+ 
+ namespace papi {
+ static bool isInit;
+ static bool isSampling;
+ static __thread int papiEventSet = PAPI_NULL;
+ 
+-//static int papiEvents[2] = {PAPI_L3_TCA,PAPI_L3_TCM};
+-//static const char* papiNames[2] = {"L3_ACCESSES","L3_MISSES"};
++static int papiEvents[3] = {PAPI_L3_TCA, PAPI_L3_TCM, PAPI_TOT_CYC};
++static const char* papiNames[3] = {"L3_ACCESSES","L3_MISSES", "CyclesCounter"};
+ 
+-static int papiEvents[2] = {PAPI_TOT_INS, PAPI_TOT_CYC};
+-static const char* papiNames[2] = {"Instructions", "Cycles"};
++//static int papiEvents[2] = {PAPI_TOT_INS, PAPI_TOT_CYC};
++//static const char* papiNames[2] = {"Instructions", "Cycles"};
+ 
+ //static int papiEvents[2] = {PAPI_L1_DCM, PAPI_TOT_CYC};
+ //static const char* papiNames[2] = {"L1DCMCounter", "CyclesCounter"};
+@@ -168,18 +169,24 @@
+ 
+   long_long papiResults[sizeof(papiNames)/sizeof(*papiNames)];
+ 
++  memset(&papiResults, 0, sizeof(papiResults));
++
+   // Get the values
+-  if ((rv = PAPI_stop(papiEventSet, papiResults)) != PAPI_OK)
++  if ((rv = PAPI_stop(papiEventSet, papiResults)) != PAPI_OK) {
+     GALOIS_DIE(PAPI_strerror(rv));
++  }
+   // Remove all events in the eventset
+-  if ((rv = PAPI_cleanup_eventset(papiEventSet)) != PAPI_OK)
++  if ((rv = PAPI_cleanup_eventset(papiEventSet)) != PAPI_OK) {
+     GALOIS_DIE(PAPI_strerror(rv));
++  }
+   // Free all memory and data structures, EventSet must be empty.
+-  if ((rv = PAPI_destroy_eventset(&papiEventSet)) != PAPI_OK)
++  if ((rv = PAPI_destroy_eventset(&papiEventSet)) != PAPI_OK) {
+     GALOIS_DIE(PAPI_strerror(rv));
++  }
+   // Unregister thread
+-  if ((rv = PAPI_unregister_thread()) != PAPI_OK) 
++  if ((rv = PAPI_unregister_thread()) != PAPI_OK) {
+     GALOIS_DIE(PAPI_strerror(rv));
++  }
+ 
+   for (unsigned i = 0; i < sizeof(papiNames)/sizeof(*papiNames); ++i)
+     Galois::Runtime::reportStat(NULL, papiNames[i], papiResults[i]);
+diff -x .git -Naur Galois-2.2.1-prepatch/src/Stm.cpp Galois-2.2.1/src/Stm.cpp
+--- Galois-2.2.1-prepatch/src/Stm.cpp	1970-01-01 01:00:00.000000000 +0100
++++ Galois-2.2.1/src/Stm.cpp	2017-03-20 11:07:57.000000000 +0000
+@@ -0,0 +1,9 @@
++#include "Galois/Runtime/Stm.h"
++#include "Galois/Runtime/Context.h"
++
++#include <stdio.h>
++
++void Galois::Runtime::Stm::stm_on_abort(void* arg) {
++  applyReleasable();
++  clearReleasable();
++}
+diff -x .git -Naur Galois-2.2.1-prepatch/src/ThreadPool_pthread.cpp Galois-2.2.1/src/ThreadPool_pthread.cpp
+--- Galois-2.2.1-prepatch/src/ThreadPool_pthread.cpp	2014-02-27 19:56:26.000000000 +0000
++++ Galois-2.2.1/src/ThreadPool_pthread.cpp	2017-03-20 11:07:57.000000000 +0000
+@@ -21,6 +21,7 @@
+  * @author Andrew Lenharth <andrewl@lenharth.org>
+  */
+ #include "Galois/Runtime/Sampling.h"
++#include "Galois/Runtime/Stm.h"
+ #include "Galois/Runtime/ThreadPool.h"
+ #include "Galois/Runtime/ll/EnvCheck.h"
+ #include "Galois/Runtime/ll/HWTopo.h"
+@@ -143,11 +144,13 @@
+   }
+ 
+   void prefixThreadWork(unsigned tid) {
++    Galois::Runtime::Stm::threadEnter();
+     if (tid)
+       Galois::Runtime::beginThreadSampling();
+   }
+ 
+   void suffixThreadWork(unsigned tid) {
++    Galois::Runtime::Stm::threadExit();
+     if (tid)
+       Galois::Runtime::endThreadSampling();
+   }
+@@ -172,6 +175,7 @@
+     ThreadPool(Galois::Runtime::LL::getMaxThreads()),
+     started(0), shutdown(false), workBegin(0), workEnd(0)
+   {
++    Galois::Runtime::Stm::start();
+     initThread();
+ 
+     starts = new Semaphore[maxThreads];
+@@ -196,6 +200,7 @@
+     }
+     delete [] starts;
+     delete [] threads;
++    Galois::Runtime::Stm::stop();
+   }
+ 
+   virtual void run(RunCommand* begin, RunCommand* end, unsigned num) {
+diff -x .git -Naur Galois-2.2.1-prepatch/src/ll/CMakeLists.txt Galois-2.2.1/src/ll/CMakeLists.txt
+--- Galois-2.2.1-prepatch/src/ll/CMakeLists.txt	2014-02-27 19:56:27.000000000 +0000
++++ Galois-2.2.1/src/ll/CMakeLists.txt	2017-03-21 20:14:26.000000000 +0000
+@@ -9,6 +9,11 @@
+   message(FATAL_ERROR "Unknown system name: ${CMAKE_SYSTEM_NAME}")
+ endif()
+ 
++if(NOT USE_HWTOPO)
++  message(WARNING "disabling HWTOPO is not advised for performance runs")
++  set(hwtopo "None")
++endif()
++
+ add_internal_library(ll EnvCheck.cpp gIO.cpp HWTopo.cpp
+   HWTopo${hwtopo}.cpp SimpleLock.cpp
+   TID.cpp)
+diff -x .git -Naur Galois-2.2.1-prepatch/src/ll/HWTopoNone.cpp Galois-2.2.1/src/ll/HWTopoNone.cpp
+--- Galois-2.2.1-prepatch/src/ll/HWTopoNone.cpp	1970-01-01 01:00:00.000000000 +0100
++++ Galois-2.2.1/src/ll/HWTopoNone.cpp	2017-03-20 18:04:03.000000000 +0000
+@@ -0,0 +1,100 @@
++/** Machine Descriptions on BlueGeneQ -*- C++ -*-
++ * @file
++ * @section License
++ *
++ * Galois, a framework to exploit amorphous data-parallelism in irregular
++ * programs.
++ *
++ * Copyright (C) 2013, The University of Texas at Austin. All rights reserved.
++ * UNIVERSITY EXPRESSLY DISCLAIMS ANY AND ALL WARRANTIES CONCERNING THIS SOFTWARE
++ * AND DOCUMENTATION, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR ANY
++ * PARTICULAR PURPOSE, NON-INFRINGEMENT AND WARRANTIES OF PERFORMANCE, AND ANY
++ * WARRANTY THAT MIGHT OTHERWISE ARISE FROM COURSE OF DEALING OR USAGE OF TRADE.
++ * NO WARRANTY IS EITHER EXPRESS OR IMPLIED WITH RESPECT TO THE USE OF THE
++ * SOFTWARE OR DOCUMENTATION. Under no circumstances shall University be liable
++ * for incidental, special, indirect, direct or consequential damages or loss of
++ * profits, interruption of business, or related expenses which may arise from use
++ * of Software or Documentation, including but not limited to those resulting from
++ * defects in Software and/or Documentation, or loss or inaccuracy of data of any
++ * kind.
++ *
++ * @section Description
++ *
++ * See HWTopoLinux.cpp.
++ *
++ * @author Donald Nguyen <ddn@cs.utexas.edu>
++*/
++#include "Galois/Runtime/ll/HWTopo.h"
++#include "Galois/Runtime/ll/gio.h"
++
++#include <vector>
++#include <sched.h>
++
++using namespace Galois::Runtime::LL;
++
++namespace {
++
++//! Flat machine with the correct number of threads and binding
++struct Policy {
++  std::vector<int> procmap; //Galois id -> cpu id
++
++  unsigned numThreads, numCores, numPackages;
++
++  Policy() {
++    for (int i = 0; i < 16; ++i) {
++      for (int j = 0; j < 4; ++j) {
++        procmap.push_back(j*16 + i);
++      }
++    }
++    numThreads = procmap.size();
++    numCores = procmap.size();
++    numPackages = 1;
++  }
++};
++
++Policy& getPolicy() {
++  static Policy A;
++  return A;
++}
++
++} //namespace
++
++bool Galois::Runtime::LL::bindThreadToProcessor(int id) {
++  return true;
++}
++
++unsigned Galois::Runtime::LL::getProcessorForThread(int id) {
++  return getPolicy().procmap[id];
++}
++
++unsigned Galois::Runtime::LL::getMaxThreads() {
++  return getPolicy().numThreads;
++}
++
++unsigned Galois::Runtime::LL::getMaxCores() {
++  return getPolicy().numCores;
++}
++
++unsigned Galois::Runtime::LL::getMaxPackages() {
++  return getPolicy().numPackages;
++}
++
++unsigned Galois::Runtime::LL::getMaxPackageForThread(int id) {
++  return getPolicy().numPackages - 1;
++}
++
++unsigned Galois::Runtime::LL::getPackageForThread(int id) {
++  return 0;
++}
++
++bool Galois::Runtime::LL::isPackageLeader(int id) {
++  return id == 0;
++}
++
++unsigned Galois::Runtime::LL::getLeaderForThread(int id) {
++  return 0;
++}
++
++unsigned Galois::Runtime::LL::getLeaderForPackage(int id) {
++  return 0;
++}

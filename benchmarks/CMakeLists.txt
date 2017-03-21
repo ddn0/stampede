@@ -1,0 +1,31 @@
+cmake_minimum_required(VERSION 2.8.8)
+set(USE_HTM OFF CACHE BOOL "Use hardware transactional memory")
+set(USE_STM OFF CACHE BOOL "Use software transactional memory")
+set(USE_XTM OFF CACHE BOOL "Use exclusive software transactional memory")
+set(USE_XTM_INLINE OFF CACHE BOOL "Use exclusive software transactional memory")
+set(USE_SALLOC OFF CACHE BOOL "Use scalable memory allocator")
+set(SALLOC_LIB "/home/lib/libtcmalloc_minimal.a" CACHE STRING "Path to tcmalloc")
+set(USE_PAPI OFF CACHE BOOL "Use PAPI" FORCE)
+set(USE_STAMP_PALLOC OFF CACHE BOOL "Use Stamp parallel malloc")
+set(GALOIS_CMAKE_EXPORT "" CACHE STRING "Path to Galois cmake exports")
+set(TINYSTM_CMAKE_EXPORT "" CACHE STRING "Path to tinystm cmake exports")
+
+set(CMAKE_PREFIX_PATH ${GALOIS_CMAKE_EXPORT} ${TINYSTM_CMAKE_EXPORT} ${CMAKE_PREFIX_PATH})
+
+find_package(Threads REQUIRED)
+find_package(Galois REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
+if(USE_STM)
+  find_package(tinystm REQUIRED NO_CMAKE_PACKAGE_REGISTRY)
+endif()
+
+set(CMAKE_CXX_COMPILER ${Galois_CXX_COMPILER})
+set(CMAKE_CXX_FLAGS "${Galois_CXX_FLAGS} ${CMAKE_CXX_FLAGS}")
+
+add_subdirectory(xtm)
+set(XTM_LIBRARIES xtm)
+get_filename_component(XTM_INCLUDE_DIRS xtm/include REALPATH)
+
+add_subdirectory(stamp-0.9.10)
+add_subdirectory(stamp-grun)
+add_subdirectory(stamp-g)
+add_subdirectory(parsec-2.1)

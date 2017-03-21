@@ -1,0 +1,4652 @@
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/.patched stamp-0.9.10/.patched
+--- stamp-0.9.10-prepatch/.patched	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/.patched	2017-03-21 21:04:54.000000000 +0000
+@@ -0,0 +1 @@
++patched
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/CMakeLists.txt stamp-0.9.10/CMakeLists.txt
+--- stamp-0.9.10-prepatch/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/CMakeLists.txt	2017-03-21 15:28:47.000000000 +0000
+@@ -0,0 +1,86 @@
++get_filename_component(LIB_DIR lib REALPATH)
++
++if(CMAKE_CXX_COMPILER_ID MATCHES "XL")
++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -qalias=noansi")
++  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -qalias=noansi")
++elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
++endif()
++
++include_directories(lib)
++
++if(EXISTS /usr/global/tools/papi/bgqos_0/papi-5.0.1-V1R1M2/include)
++  set(PAPI_INCLUDE_DIRS /usr/global/tools/papi/bgqos_0/papi-5.0.1-V1R1M2/include)
++  set(PAPI_LIBRARIES /usr/global/tools/papi/bgqos_0/papi-5.0.1-V1R1M2/lib/libpapi.a rt)
++else()
++  set(PAPI_INCLUDE_DIRS /usr/lib64/papi-5.1.1/usr/include)
++  set(PAPI_LIBRARIES /usr/lib64/papi-5.1.1/usr/lib/libpapi.so rt)
++endif()
++
++if(USE_PAPI)
++  include_directories(${PAPI_INCLUDE_DIRS})
++  add_definitions(-DUSE_PAPI)
++endif()
++
++set(extra_sources)
++if(USE_STAMP_PALLOC)
++  add_definitions(-DSTAMP_PALLOC)
++  add_definitions(-DSIMULATOR)
++  set(extra_sources ${extra_sources} ${LIB_DIR}/memory.c)
++endif()
++if(USE_PAPI OR USE_SALLOC)
++  set(extra_sources ${extra_sources} ${LIB_DIR}/force_cxx_linker.cpp)
++endif()
++
++if(USE_SALLOC)
++  if(EXISTS /g/g14/nguyen91/local-bgq/lib/libtcmalloc_minimal.a)
++    set(SALLOC_LIB /g/g14/nguyen91/local-bgq/lib/libtcmalloc_minimal.a)
++  else()
++    set(SALLOC_LIB /h1/ddn/local/lib/libtcmalloc_minimal.a)
++  endif()
++endif()
++
++set(libraries ${CMAKE_THREAD_LIBS_INIT} m)
++
++if(USE_SALLOC)
++  set(libraries ${libraryes} ${SALLOC_LIB})
++endif()
++
++if(USE_PAPI)
++  set(libraries ${libraries} ${PAPI_LIBRARIES})
++endif()
++
++if(USE_STM)
++  add_definitions(-DSTM)
++  include_directories(${tinystm_INCLUDE_DIRS})
++  set(libraries ${libraries} ${tinystm_LIBRARIES})
++elseif(USE_XTM)
++  add_definitions(-DSTM)
++  add_definitions(-DXTM)
++  add_definitions(-DSIMULATOR)
++  if(USE_XTM_INLINE)
++    add_definitions(-DXTM_USE_INLINE_LOCKABLE)
++  endif()
++  include_directories(${XTM_INCLUDE_DIRS})
++  set(libraries ${libraries} ${XTM_LIBRARIES})
++elseif(USE_HTM)
++  add_definitions(-DHTM)
++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -qtm")
++  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -qtm")
++endif()
++
++function(app name)
++  add_executable(${name} ${ARGN} ${extra_sources})
++  target_link_libraries(${name} ${libraries})
++  install(TARGETS ${name} RUNTIME DESTINATION bin)
++endfunction(app)
++
++
++add_subdirectory(bayes)
++add_subdirectory(genome)
++add_subdirectory(intruder)
++add_subdirectory(kmeans)
++add_subdirectory(labyrinth)
++add_subdirectory(ssca2)
++add_subdirectory(vacation)
++add_subdirectory(yada)
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/bayes/CMakeLists.txt stamp-0.9.10/bayes/CMakeLists.txt
+--- stamp-0.9.10-prepatch/bayes/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/bayes/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,30 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DLIST_NO_DUPLICATES -DLEARNER_TRY_REMOVE -DLEARNER_TRY_REVERSE)
++
++set(sources
++        adtree.c
++        bayes.c
++	data.c
++	learner.c
++	net.c
++	sort.c
++	${LIB_DIR}/bitmap.c
++	${LIB_DIR}/list.c
++	${LIB_DIR}/mt19937ar.c
++	${LIB_DIR}/queue.c
++	${LIB_DIR}/random.c
++	${LIB_DIR}/thread.c
++	${LIB_DIR}/vector.c)
++
++app(bayes ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/bayes/bayes.c stamp-0.9.10/bayes/bayes.c
+--- stamp-0.9.10-prepatch/bayes/bayes.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/bayes/bayes.c	2017-03-20 14:49:53.000000000 +0000
+@@ -322,9 +322,11 @@
+     TIMER_T learnStartTime;
+     TIMER_READ(learnStartTime);
+     GOTO_SIM();
++    thread_begin_timing();
+ 
+     learner_run(learnerPtr);
+ 
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_T learnStopTime;
+     TIMER_READ(learnStopTime);
+@@ -333,6 +335,8 @@
+     fflush(stdout);
+     printf("Learn time = %f\n",
+            TIMER_DIFF_SECONDS(learnStartTime, learnStopTime));
++    printf("STAMP time = %f\n",
++           TIMER_DIFF_SECONDS(learnStartTime, learnStopTime));
+     fflush(stdout);
+ 
+     /*
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/bayes/learner.c stamp-0.9.10/bayes/learner.c
+--- stamp-0.9.10-prepatch/bayes/learner.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/bayes/learner.c	2017-03-20 14:49:53.000000000 +0000
+@@ -236,15 +236,17 @@
+         learnerPtr->netPtr = net_alloc(dataPtr->numVar);
+         assert(learnerPtr->netPtr);
+         learnerPtr->localBaseLogLikelihoods =
+-            (float*)malloc(dataPtr->numVar * sizeof(float));
++            (LocalBaseLogLikelihood*)malloc(dataPtr->numVar * sizeof(*learnerPtr->localBaseLogLikelihoods));
+         assert(learnerPtr->localBaseLogLikelihoods);
+-        learnerPtr->baseLogLikelihood = 0.0F;
++        XTM_LOCKABLE_VALUE(learnerPtr->baseLogLikelihood) = 0.0F;
++        XTM_LOCKABLE_INIT(learnerPtr->baseLogLikelihood);
+         learnerPtr->tasks =
+             (learner_task_t*)malloc(dataPtr->numVar * sizeof(learner_task_t));
+         assert(learnerPtr->tasks);
+         learnerPtr->taskListPtr = list_alloc(&compareTask);
+         assert(learnerPtr->taskListPtr);
+-        learnerPtr->numTotalParent = 0;
++        XTM_LOCKABLE_VALUE(learnerPtr->numTotalParent) = 0;
++        XTM_LOCKABLE_INIT(learnerPtr->numTotalParent);
+     }
+ 
+     return learnerPtr;
+@@ -333,7 +335,7 @@
+     bool_t status;
+ 
+     adtree_t* adtreePtr = learnerPtr->adtreePtr;
+-    float* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
++    LocalBaseLogLikelihood* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
+     learner_task_t* tasks = learnerPtr->tasks;
+ 
+     query_t queries[2];
+@@ -378,7 +380,8 @@
+                                               queryVectorPtr,
+                                               parentQueryVectorPtr);
+ 
+-        localBaseLogLikelihoods[v] = localBaseLogLikelihood;
++        XTM_LOCKABLE_VALUE(localBaseLogLikelihoods[v].value) = localBaseLogLikelihood;
++        XTM_LOCKABLE_INIT(localBaseLogLikelihoods[v].value);
+         baseLogLikelihood += localBaseLogLikelihood;
+ 
+     } /* foreach variable */
+@@ -405,7 +408,7 @@
+ 
+         queries[0].index = v;
+         long bestLocalIndex = v;
+-        float bestLocalLogLikelihood = localBaseLogLikelihoods[v];
++        float bestLocalLogLikelihood = XTM_LOCKABLE_VALUE(localBaseLogLikelihoods[v].value);
+ 
+         status = PVECTOR_PUSHBACK(queryVectorPtr, (void*)&queries[1]);
+         assert(status);
+@@ -471,7 +474,7 @@
+         if (bestLocalIndex != v) {
+             float logLikelihood = numRecord * (baseLogLikelihood +
+                                                 + bestLocalLogLikelihood
+-                                                - localBaseLogLikelihoods[v]);
++                                                - XTM_LOCKABLE_VALUE(localBaseLogLikelihoods[v].value));
+             float score = penalty + logLikelihood;
+             learner_task_t* taskPtr = &tasks[v];
+             taskPtr->op = OPERATION_INSERT;
+@@ -730,7 +733,7 @@
+     bool_t status;
+     adtree_t* adtreePtr               = learnerPtr->adtreePtr;
+     net_t*    netPtr                  = learnerPtr->netPtr;
+-    float*    localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
++    LocalBaseLogLikelihood*    localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
+ 
+     TMpopulateParentQueryVector(TM_ARG  netPtr, toId, queries, parentQueryVectorPtr);
+ 
+@@ -753,7 +756,7 @@
+ 
+     float bestFromId = toId; /* flag for not found */
+     float oldLocalLogLikelihood =
+-        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId]);
++        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId].value);
+     float bestLocalLogLikelihood = oldLocalLogLikelihood;
+ 
+     status = TMNET_FINDDESCENDANTS(netPtr, toId, invalidBitmapPtr, workQueuePtr);
+@@ -857,7 +860,7 @@
+     bool_t status;
+     adtree_t* adtreePtr = learnerPtr->adtreePtr;
+     net_t* netPtr = learnerPtr->netPtr;
+-    float* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
++    LocalBaseLogLikelihood* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
+ 
+     TMpopulateParentQueryVector(TM_ARG
+                                 netPtr, toId, queries, origParentQueryVectorPtr);
+@@ -869,7 +872,7 @@
+ 
+     float bestFromId = toId; /* flag for not found */
+     float oldLocalLogLikelihood =
+-        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId]);
++        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId].value);
+     float bestLocalLogLikelihood = oldLocalLogLikelihood;
+ 
+     long i;
+@@ -972,7 +975,7 @@
+     bool_t status;
+     adtree_t* adtreePtr = learnerPtr->adtreePtr;
+     net_t* netPtr = learnerPtr->netPtr;
+-    float* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
++    LocalBaseLogLikelihood* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
+ 
+     TMpopulateParentQueryVector(TM_ARG
+                                 netPtr, toId, queries, toOrigParentQueryVectorPtr);
+@@ -984,7 +987,7 @@
+ 
+     long bestFromId = toId; /* flag for not found */
+     float oldLocalLogLikelihood =
+-        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId]);
++        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId].value);
+     float bestLocalLogLikelihood = oldLocalLogLikelihood;
+     long fromId = 0;
+ 
+@@ -996,7 +999,7 @@
+ 
+         bestLocalLogLikelihood =
+             oldLocalLogLikelihood +
+-            (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId]);
++            (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId].value);
+ 
+         TMpopulateParentQueryVector(TM_ARG
+                                     netPtr,
+@@ -1110,7 +1113,7 @@
+ 
+     if (bestFromId != toId) {
+         float fromLocalLogLikelihood =
+-            (float)TM_SHARED_READ_F(localBaseLogLikelihoods[bestFromId]);
++            (float)TM_SHARED_READ_F(localBaseLogLikelihoods[bestFromId].value);
+         long numRecord = adtreePtr->numRecord;
+         float penalty = numTotalParent * basePenalty;
+         float logLikelihood = numRecord * (baseLogLikelihood +
+@@ -1143,7 +1146,7 @@
+     net_t* netPtr = learnerPtr->netPtr;
+     adtree_t* adtreePtr = learnerPtr->adtreePtr;
+     long numRecord = adtreePtr->numRecord;
+-    float* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
++    LocalBaseLogLikelihood* localBaseLogLikelihoods = learnerPtr->localBaseLogLikelihoods;
+     list_t* taskListPtr = learnerPtr->taskListPtr;
+ 
+     float operationQualityFactor = global_operationQualityFactor;
+@@ -1279,10 +1282,10 @@
+                                                   queryVectorPtr,
+                                                   parentQueryVectorPtr);
+                     float toLocalBaseLogLikelihood =
+-                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId]);
++                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId].value);
+                     deltaLogLikelihood +=
+                         toLocalBaseLogLikelihood - newBaseLogLikelihood;
+-                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[toId],
++                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[toId].value,
+                                       newBaseLogLikelihood);
+                     TM_END();
+                     TM_BEGIN();
+@@ -1308,10 +1311,10 @@
+                                                   queryVectorPtr,
+                                                   parentQueryVectorPtr);
+                     float fromLocalBaseLogLikelihood =
+-                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId]);
++                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId].value);
+                     deltaLogLikelihood +=
+                         fromLocalBaseLogLikelihood - newBaseLogLikelihood;
+-                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[fromId],
++                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[fromId].value,
+                                       newBaseLogLikelihood);
+                     TM_END();
+                     TM_BEGIN();
+@@ -1338,10 +1341,10 @@
+                                                   queryVectorPtr,
+                                                   parentQueryVectorPtr);
+                     float fromLocalBaseLogLikelihood =
+-                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId]);
++                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[fromId].value);
+                     deltaLogLikelihood +=
+                         fromLocalBaseLogLikelihood - newBaseLogLikelihood;
+-                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[fromId],
++                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[fromId].value,
+                                       newBaseLogLikelihood);
+                     TM_END();
+ 
+@@ -1360,10 +1363,10 @@
+                                                   queryVectorPtr,
+                                                   parentQueryVectorPtr);
+                     float toLocalBaseLogLikelihood =
+-                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId]);
++                        (float)TM_SHARED_READ_F(localBaseLogLikelihoods[toId].value);
+                     deltaLogLikelihood +=
+                         toLocalBaseLogLikelihood - newBaseLogLikelihood;
+-                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[toId],
++                    TM_SHARED_WRITE_F(localBaseLogLikelihoods[toId].value,
+                                       newBaseLogLikelihood);
+                     TM_END();
+                     break;
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/bayes/learner.h stamp-0.9.10/bayes/learner.h
+--- stamp-0.9.10-prepatch/bayes/learner.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/bayes/learner.h	2017-03-20 14:49:53.000000000 +0000
+@@ -82,18 +82,22 @@
+ 
+ #define CACHE_LINE_SIZE (64)
+ 
++typedef struct LocalBaseLogLikelihood {
++  XTM_DECL_LOCKABLE(float, value);
++} LocalBaseLogLikelihood;
++
+ typedef struct learner {
+     adtree_t* adtreePtr;
+     net_t* netPtr;
+-    float* localBaseLogLikelihoods;
++    LocalBaseLogLikelihood* localBaseLogLikelihoods;
+     char pad1[CACHE_LINE_SIZE - sizeof(float*)];
+-    float baseLogLikelihood;
++    XTM_DECL_LOCKABLE(float, baseLogLikelihood);
+     char pad2[CACHE_LINE_SIZE - sizeof(float)];
+     learner_task_t* tasks;
+     char pad3[CACHE_LINE_SIZE - sizeof(learner_task_t*)];
+     list_t* taskListPtr;
+     char pad4[CACHE_LINE_SIZE - sizeof(list_t*)];
+-    long numTotalParent;
++    XTM_DECL_LOCKABLE(long, numTotalParent);
+     char pad5[CACHE_LINE_SIZE - sizeof(long)];
+ } learner_t;
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/common/Defines.common.mk.orig stamp-0.9.10/common/Defines.common.mk.orig
+--- stamp-0.9.10-prepatch/common/Defines.common.mk.orig	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/common/Defines.common.mk.orig	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,31 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++
++CC       := gcc
++CFLAGS   += -g -Wall -pthread
++CFLAGS   += -O3
++CFLAGS   += -I$(LIB)
++CPP      := g++
++CPPFLAGS += $(CFLAGS)
++LD       := g++
++LIBS     += -lpthread
++
++# Remove these files when doing clean
++OUTPUT +=
++
++LIB := ../lib
++
++STM := ../../tl2
++
++LOSTM := ../../OpenTM/lostm
++
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/common/Makefile.stm.orig stamp-0.9.10/common/Makefile.stm.orig
+--- stamp-0.9.10-prepatch/common/Makefile.stm.orig	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/common/Makefile.stm.orig	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,39 @@
++# ==============================================================================
++#
++# Makefile.stm
++#
++# ==============================================================================
++
++
++# ==============================================================================
++# Variables
++# ==============================================================================
++
++CFLAGS   += -DSTM -I$(STM)
++CPPFLAGS := $(CFLAGS)
++LDFLAGS  += -L$(STM)
++LIBS     += -ltl2
++
++
++# ==============================================================================
++# Rules
++# ==============================================================================
++
++.PHONY: default
++default: $(PROG)
++
++.PHONY: clean
++clean:
++	$(RM) $(OBJS) $(PROG) $(OUTPUT)
++
++$(PROG): $(OBJS)
++	$(LD) $(LDFLAGS) $^ $(LIBS) -o $(PROG)
++
++include ../common/Makefile.common
++
++
++# ==============================================================================
++#
++# End of Makefile.stm
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/genome/CMakeLists.txt stamp-0.9.10/genome/CMakeLists.txt
+--- stamp-0.9.10-prepatch/genome/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/genome/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,31 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DLIST_NO_DUPLICATES -DCHUNK_STEP1=12)
++
++set(sources
++	gene.c 
++	genome.c 
++	segments.c 
++	sequencer.c 
++	table.c 
++	${LIB_DIR}/bitmap.c 
++	${LIB_DIR}/hash.c 
++	${LIB_DIR}/hashtable.c 
++	${LIB_DIR}/pair.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/list.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/thread.c 
++	${LIB_DIR}/vector.c)
++
++app(genome ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/genome/genome.c stamp-0.9.10/genome/genome.c
+--- stamp-0.9.10-prepatch/genome/genome.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/genome/genome.c	2017-03-20 14:49:53.000000000 +0000
+@@ -228,6 +228,7 @@
+     fflush(stdout);
+     TIMER_READ(start);
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -236,10 +237,12 @@
+ #else
+     thread_start(sequencer_run, (void*)sequencerPtr);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_READ(stop);
+     puts("done.");
+     printf("Time = %lf\n", TIMER_DIFF_SECONDS(start, stop));
++    printf("STAMP time = %lf\n", TIMER_DIFF_SECONDS(start, stop));
+     fflush(stdout);
+ 
+     /* Check result */
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/genome/sequencer.c stamp-0.9.10/genome/sequencer.c
+--- stamp-0.9.10-prepatch/genome/sequencer.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/genome/sequencer.c	2017-03-21 17:41:16.000000000 +0000
+@@ -100,14 +100,14 @@
+ };
+ 
+ struct constructEntry {
+-    bool_t isStart;
+-    char* segment;
++    XTM_DECL_LOCKABLE(bool_t, isStart);
++    XTM_DECL_LOCKABLE(char*, segment);
+     ulong_t endHash;
+-    struct constructEntry* startPtr;
++    XTM_DECL_LOCKABLE(struct constructEntry*, startPtr);
+     struct constructEntry* nextPtr;
+-    struct constructEntry* endPtr;
+-    long overlap;
+-    long length;
++    XTM_DECL_LOCKABLE(struct constructEntry*, endPtr);
++    XTM_DECL_LOCKABLE(long, overlap);
++    XTM_DECL_LOCKABLE(long, length);
+ };
+ 
+ 
+@@ -208,14 +208,20 @@
+     }
+     for (i= 0; i < maxNumUniqueSegment; i++) {
+         constructEntry_t* constructEntryPtr = &sequencerPtr->constructEntries[i];
+-        constructEntryPtr->isStart = TRUE;
+-        constructEntryPtr->segment = NULL;
++        XTM_LOCKABLE_VALUE(constructEntryPtr->isStart) = TRUE;
++        XTM_LOCKABLE_INIT(constructEntryPtr->isStart);
++        XTM_LOCKABLE_VALUE(constructEntryPtr->segment) = NULL;
++        XTM_LOCKABLE_INIT(constructEntryPtr->segment);
+         constructEntryPtr->endHash = 0;
+-        constructEntryPtr->startPtr = constructEntryPtr;
++        XTM_LOCKABLE_VALUE(constructEntryPtr->startPtr) = constructEntryPtr;
++        XTM_LOCKABLE_INIT(constructEntryPtr->startPtr);
+         constructEntryPtr->nextPtr = NULL;
+-        constructEntryPtr->endPtr = constructEntryPtr;
+-        constructEntryPtr->overlap = 0;
+-        constructEntryPtr->length = segmentLength;
++        XTM_LOCKABLE_VALUE(constructEntryPtr->endPtr) = constructEntryPtr;
++        XTM_LOCKABLE_INIT(constructEntryPtr->endPtr);
++        XTM_LOCKABLE_VALUE(constructEntryPtr->overlap) = 0;
++        XTM_LOCKABLE_INIT(constructEntryPtr->overlap);
++        XTM_LOCKABLE_VALUE(constructEntryPtr->length) = segmentLength;
++        XTM_LOCKABLE_INIT(constructEntryPtr->length);
+     }
+     sequencerPtr->hashToConstructEntryTable = table_alloc(geneLength, NULL);
+     if (sequencerPtr->hashToConstructEntryTable == NULL) {
+@@ -457,7 +463,7 @@
+             /*  ConstructEntries[entryIndex] is local data */
+             constructEntry_t* endConstructEntryPtr =
+                 &constructEntries[entryIndex];
+-            char* endSegment = endConstructEntryPtr->segment;
++            char* endSegment = XTM_LOCKABLE_VALUE(endConstructEntryPtr->segment);
+             ulong_t endHash = endConstructEntryPtr->endHash;
+ 
+             list_t* chainPtr = buckets[endHash % numBucket]; /* buckets: constant data */
+@@ -469,7 +475,7 @@
+ 
+                 constructEntry_t* startConstructEntryPtr =
+                     (constructEntry_t*)list_iter_next(&it, chainPtr);
+-                char* startSegment = startConstructEntryPtr->segment;
++                char* startSegment = XTM_LOCKABLE_VALUE(startConstructEntryPtr->segment);
+                 long newLength = 0;
+ 
+                 /* endConstructEntryPtr is local except for properties startPtr/endPtr/length */
+@@ -542,14 +548,14 @@
+                 endInfoEntries[0].jumpToNext = i;
+                 if (endInfoEntries[0].isEnd) {
+                     constructEntry_t* constructEntryPtr = &constructEntries[0];
+-                    char* segment = constructEntryPtr->segment;
++                    char* segment = XTM_LOCKABLE_VALUE(constructEntryPtr->segment);
+                     constructEntryPtr->endHash = (ulong_t)hashString(&segment[index]);
+                 }
+                 /* Continue scanning (do not reset i) */
+                 for (j = 0; i < numUniqueSegment; i+=endInfoEntries[i].jumpToNext) {
+                     if (endInfoEntries[i].isEnd) {
+                         constructEntry_t* constructEntryPtr = &constructEntries[i];
+-                        char* segment = constructEntryPtr->segment;
++                        char* segment = XTM_LOCKABLE_VALUE(constructEntryPtr->segment);
+                         constructEntryPtr->endHash = (ulong_t)hashString(&segment[index]);
+                         endInfoEntries[j].jumpToNext = MAX(1, (i - j));
+                         j = i;
+@@ -575,8 +581,8 @@
+ 
+         for (i = 0; i < numUniqueSegment; i++) {
+             constructEntry_t* constructEntryPtr = &constructEntries[i];
+-            if (constructEntryPtr->isStart) {
+-              totalLength += constructEntryPtr->length;
++            if (XTM_LOCKABLE_VALUE(constructEntryPtr->isStart)) {
++              totalLength += XTM_LOCKABLE_VALUE(constructEntryPtr->length);
+             }
+         }
+ 
+@@ -590,19 +596,19 @@
+         for (i = 0; i < numUniqueSegment; i++) {
+             constructEntry_t* constructEntryPtr = &constructEntries[i];
+             /* If there are several start segments, we append in arbitrary order  */
+-            if (constructEntryPtr->isStart) {
+-                long newSequenceLength = sequenceLength + constructEntryPtr->length;
++            if (XTM_LOCKABLE_VALUE(constructEntryPtr->isStart)) {
++                long newSequenceLength = sequenceLength + XTM_LOCKABLE_VALUE(constructEntryPtr->length);
+                 assert( newSequenceLength <= totalLength );
+                 copyPtr = sequence + sequenceLength;
+                 sequenceLength = newSequenceLength;
+                 do {
+-                    long numChar = segmentLength - constructEntryPtr->overlap;
++                    long numChar = segmentLength - XTM_LOCKABLE_VALUE(constructEntryPtr->overlap);
+                     if ((copyPtr + numChar) > (sequence + newSequenceLength)) {
+                         TM_PRINT0("ERROR: sequence length != actual length\n");
+                         break;
+                     }
+                     memcpy(copyPtr,
+-                           constructEntryPtr->segment,
++                           XTM_LOCKABLE_VALUE(constructEntryPtr->segment),
+                            (numChar * sizeof(char)));
+                     copyPtr += numChar;
+                 } while ((constructEntryPtr = constructEntryPtr->nextPtr) != NULL);
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/intruder/CMakeLists.txt stamp-0.9.10/intruder/CMakeLists.txt
+--- stamp-0.9.10-prepatch/intruder/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/intruder/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,32 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DMAP_USE_RBTREE)
++
++set(sources
++	decoder.c 
++	detector.c 
++	dictionary.c 
++	intruder.c 
++	packet.c 
++	preprocessor.c 
++	stream.c 
++	${LIB_DIR}/list.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/pair.c 
++	${LIB_DIR}/queue.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/rbtree.c 
++	${LIB_DIR}/thread.c 
++	${LIB_DIR}/vector.c)
++
++app(intruder ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/intruder/intruder.c stamp-0.9.10/intruder/intruder.c
+--- stamp-0.9.10-prepatch/intruder/intruder.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/intruder/intruder.c	2017-03-20 14:49:53.000000000 +0000
+@@ -228,7 +228,8 @@
+         TM_END();
+         if (data) {
+             error_t error = PDETECTOR_PROCESS(detectorPtr, data);
+-            P_FREE(data);
++            //P_FREE(data);
++            //TM_FREE(data);
+             if (error) {
+                 bool_t status = PVECTOR_PUSHBACK(errorVectorPtr,
+                                                  (void*)decodedFlowId);
+@@ -307,6 +308,7 @@
+     TIMER_T startTime;
+     TIMER_READ(startTime);
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -316,10 +318,12 @@
+ #else
+     thread_start(processPackets, (void*)&arg);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_T stopTime;
+     TIMER_READ(stopTime);
+     printf("Elapsed time    = %f seconds\n", TIMER_DIFF_SECONDS(startTime, stopTime));
++    printf("STAMP time = %f\n", TIMER_DIFF_SECONDS(startTime, stopTime));
+ 
+     /*
+      * Check solution
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/kmeans/CMakeLists.txt stamp-0.9.10/kmeans/CMakeLists.txt
+--- stamp-0.9.10-prepatch/kmeans/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/kmeans/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,24 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++#add_definitions(-DOUTPUT_TO_STDOUT)
++
++set(sources
++	cluster.c
++	common.c
++	kmeans.c
++	normal.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/thread.c)
++
++app(kmeans ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/kmeans/kmeans.c stamp-0.9.10/kmeans/kmeans.c
+--- stamp-0.9.10-prepatch/kmeans/kmeans.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/kmeans/kmeans.c	2017-03-20 14:49:53.000000000 +0000
+@@ -370,8 +370,34 @@
+         }
+     }
+ #endif /* OUTPUT TO_STDOUT */
++#if 1
++    {
++      float sum = 0.0;
++      for (i = 0; i < numObjects; i++) {
++          sum += common_euclidDist2(
++              cluster_centres[cluster_assign[i]],
++              attributes[i],
++              numAttributes);
++      }
++      printf("SUM SQUARED ERROR: %f\n", sum);
++    }
++#endif
++
++#if 1
++    {
++      float sum = 0.0;
++      for (i = 0; i < numObjects; i++) {
++          sum += common_euclidDist2(
++              cluster_centres[cluster_assign[i]],
++              attributes[i], 
++              numAttributes);
++      }
++      printf("SUM SQUARED ERROR: %f\n", sum);
++    }
++#endif
+ 
+     printf("Time: %lg seconds\n", global_time);
++    printf("STAMP time = %lg\n", global_time);
+ 
+     free(cluster_assign);
+     free(attributes);
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/kmeans/normal.c stamp-0.9.10/kmeans/normal.c
+--- stamp-0.9.10-prepatch/kmeans/normal.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/kmeans/normal.c	2017-03-20 14:49:53.000000000 +0000
+@@ -97,6 +97,14 @@
+ 
+ double global_time = 0.0;
+ 
++typedef struct NewCentersLen {
++  XTM_DECL_LOCKABLE(long, value);
++} NewCentersLen;
++
++typedef struct NewCenters {
++  XTM_DECL_LOCKABLE(float, value1);
++} NewCenters;
++
+ typedef struct args {
+     float** feature;
+     int     nfeatures;
+@@ -104,12 +112,12 @@
+     int     nclusters;
+     int*    membership;
+     float** clusters;
+-    int**   new_centers_len;
+-    float** new_centers;
++    NewCentersLen**   new_centers_len;
++    NewCenters** new_centers;
+ } args_t;
+ 
+-float global_delta;
+-long global_i; /* index into task queue */
++XTM_DECL_LOCKABLE(float, global_delta);
++XTM_DECL_LOCKABLE(long, global_i); /* index into task queue */
+ 
+ #define CHUNK 3
+ 
+@@ -130,13 +138,13 @@
+     int     nclusters       = args->nclusters;
+     int*    membership      = args->membership;
+     float** clusters        = args->clusters;
+-    int**   new_centers_len = args->new_centers_len;
+-    float** new_centers     = args->new_centers;
++    NewCentersLen**   new_centers_len = args->new_centers_len;
++    NewCenters** new_centers     = args->new_centers;
+     float delta = 0.0;
+     int index;
+     int i;
+     int j;
+-    int start;
++    long start;
+     int stop;
+     int myId;
+ 
+@@ -166,12 +174,12 @@
+ 
+             /* Update new cluster centers : sum of objects located within */
+             TM_BEGIN();
+-            TM_SHARED_WRITE(*new_centers_len[index],
+-                            TM_SHARED_READ(*new_centers_len[index]) + 1);
++            TM_SHARED_WRITE(new_centers_len[index]->value,
++                            TM_SHARED_READ(new_centers_len[index]->value) + 1);
+             for (j = 0; j < nfeatures; j++) {
+                 TM_SHARED_WRITE_F(
+-                    new_centers[index][j],
+-                    (TM_SHARED_READ_F(new_centers[index][j]) + feature[i][j])
++                    new_centers[index][j].value1,
++                    (TM_SHARED_READ_F(new_centers[index][j].value1) + feature[i][j])
+                 );
+             }
+             TM_END();
+@@ -180,7 +188,7 @@
+         /* Update task queue */
+         if (start + CHUNK < npoints) {
+             TM_BEGIN();
+-            start = (int)TM_SHARED_READ(global_i);
++            start = TM_SHARED_READ(global_i);
+             TM_SHARED_WRITE(global_i, (start + CHUNK));
+             TM_END();
+         } else {
+@@ -213,19 +221,19 @@
+     int i;
+     int j;
+     int loop = 0;
+-    int** new_centers_len; /* [nclusters]: no. of points in each cluster */
++    NewCentersLen** new_centers_len; /* [nclusters]: no. of points in each cluster */
+     float delta;
+     float** clusters;      /* out: [nclusters][nfeatures] */
+-    float** new_centers;   /* [nclusters][nfeatures] */
++    NewCenters** new_centers;   /* [nclusters][nfeatures] */
+     void* alloc_memory = NULL;
+     args_t args;
+     TIMER_T start;
+     TIMER_T stop;
+ 
+     /* Allocate space for returning variable clusters[] */
+-    clusters = (float**)malloc(nclusters * sizeof(float*));
++    clusters = (float**)malloc(nclusters * sizeof(*clusters));
+     assert(clusters);
+-    clusters[0] = (float*)malloc(nclusters * nfeatures * sizeof(float));
++    clusters[0] = (float*)malloc(nclusters * nfeatures * sizeof(**clusters));
+     assert(clusters[0]);
+     for (i = 1; i < nclusters; i++) {
+         clusters[i] = clusters[i-1] + nfeatures;
+@@ -248,22 +256,23 @@
+      * Allocate clusters on different cache lines to reduce false sharing.
+      */
+     {
+-        int cluster_size = sizeof(int) + sizeof(float) * nfeatures;
++        int cluster_size = sizeof(NewCentersLen) + sizeof(NewCenters) * nfeatures;
+         const int cacheLineSize = 32;
+         cluster_size += (cacheLineSize-1) - ((cluster_size-1) % cacheLineSize);
+         alloc_memory = calloc(nclusters, cluster_size);
+-        new_centers_len = (int**) malloc(nclusters * sizeof(int*));
+-        new_centers = (float**) malloc(nclusters * sizeof(float*));
++        new_centers_len = (NewCentersLen**) malloc(nclusters * sizeof(long*));
++        new_centers = (NewCenters**) malloc(nclusters * sizeof(float*));
+         assert(alloc_memory && new_centers && new_centers_len);
+         for (i = 0; i < nclusters; i++) {
+-            new_centers_len[i] = (int*)((char*)alloc_memory + cluster_size * i);
+-            new_centers[i] = (float*)((char*)alloc_memory + cluster_size * i + sizeof(int));
++            new_centers_len[i] = (NewCentersLen*)((char*)alloc_memory + cluster_size * i);
++            new_centers[i] = (NewCenters*)((char*)alloc_memory + cluster_size * i + sizeof(NewCentersLen));
+         }
+     }
+ 
+     TIMER_READ(start);
+ 
+     GOTO_SIM();
++    thread_begin_timing();
+ 
+     do {
+         delta = 0.0;
+@@ -277,8 +286,10 @@
+         args.new_centers_len = new_centers_len;
+         args.new_centers     = new_centers;
+ 
+-        global_i = nthreads * CHUNK;
+-        global_delta = delta;
++        XTM_LOCKABLE_VALUE(global_i) = nthreads * CHUNK;
++        XTM_LOCKABLE_INIT(global_i);
++        XTM_LOCKABLE_VALUE(global_delta) = delta;
++        XTM_LOCKABLE_INIT(global_delta);
+ 
+ #ifdef OTM
+ #pragma omp parallel
+@@ -289,23 +300,24 @@
+         thread_start(work, &args);
+ #endif
+ 
+-        delta = global_delta;
++        delta = XTM_LOCKABLE_VALUE(global_delta);
+ 
+         /* Replace old cluster centers with new_centers */
+         for (i = 0; i < nclusters; i++) {
+             for (j = 0; j < nfeatures; j++) {
+                 if (new_centers_len[i] > 0) {
+-                    clusters[i][j] = new_centers[i][j] / *new_centers_len[i];
++                    clusters[i][j] = XTM_LOCKABLE_VALUE(new_centers[i][j].value1) / XTM_LOCKABLE_VALUE(new_centers_len[i]->value);
+                 }
+-                new_centers[i][j] = 0.0;   /* set back to 0 */
++                XTM_LOCKABLE_VALUE(new_centers[i][j].value1) = 0.0;   /* set back to 0 */
+             }
+-            *new_centers_len[i] = 0;   /* set back to 0 */
++            XTM_LOCKABLE_VALUE(new_centers_len[i]->value) = 0;   /* set back to 0 */
+         }
+ 
+         delta /= npoints;
+ 
+     } while ((delta > threshold) && (loop++ < 500));
+ 
++    thread_end_timing();
+     GOTO_REAL();
+ 
+     TIMER_READ(stop);
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/labyrinth/CMakeLists.txt stamp-0.9.10/labyrinth/CMakeLists.txt
+--- stamp-0.9.10-prepatch/labyrinth/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/labyrinth/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,30 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DUSE_EARLY_RELEASE)
++
++set(sources
++	coordinate.c 
++	grid.c 
++	labyrinth.c 
++	maze.c 
++	router.c 
++	${LIB_DIR}/list.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/pair.c 
++	${LIB_DIR}/queue.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/thread.c
++	${LIB_DIR}/vector.c)
++
++app(labyrinth ${sources})
++target_link_libraries(labyrinth m)
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/labyrinth/grid.c stamp-0.9.10/labyrinth/grid.c
+--- stamp-0.9.10-prepatch/labyrinth/grid.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/labyrinth/grid.c	2017-03-20 14:49:53.000000000 +0000
+@@ -73,6 +73,7 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <string.h>
++#include <stdint.h>
+ #include "coordinate.h"
+ #include "grid.h"
+ #include "tm.h"
+@@ -98,13 +99,17 @@
+         gridPtr->height = height;
+         gridPtr->depth  = depth;
+         long n = width * height * depth;
+-        long* points_unaligned = (long*)malloc(n * sizeof(long) + CACHE_LINE_SIZE);
++        grid_point* points_unaligned = (grid_point*)malloc(n * sizeof(grid_point) + CACHE_LINE_SIZE);
+         assert(points_unaligned);
+         gridPtr->points_unaligned = points_unaligned;
+-        gridPtr->points = (long*)((char*)(((unsigned long)points_unaligned
++        gridPtr->points = (grid_point*)((char*)(((uintptr_t)points_unaligned
+                                           & ~(CACHE_LINE_SIZE-1)))
+                                   + CACHE_LINE_SIZE);
+-        memset(gridPtr->points, GRID_POINT_EMPTY, (n * sizeof(long)));
++        //memset(gridPtr->points, GRID_POINT_EMPTY, (n * sizeof(long)));
++        for (long i = 0; i < n; ++i) {
++          XTM_LOCKABLE_VALUE(gridPtr->points[i].value) = GRID_POINT_EMPTY;
++          XTM_LOCKABLE_INIT(gridPtr->points[i].value);
++        }
+     }
+ 
+     return gridPtr;
+@@ -126,13 +131,17 @@
+         gridPtr->height = height;
+         gridPtr->depth  = depth;
+         long n = width * height * depth;
+-        long* points_unaligned = (long*)P_MALLOC(n * sizeof(long) + CACHE_LINE_SIZE);
++        grid_point* points_unaligned = (grid_point*)P_MALLOC(n * sizeof(grid_point) + CACHE_LINE_SIZE);
+         assert(points_unaligned);
+         gridPtr->points_unaligned = points_unaligned;
+-        gridPtr->points = (long*)((char*)(((unsigned long)points_unaligned
++        gridPtr->points = (grid_point*)((char*)(((uintptr_t)points_unaligned
+                                           & ~(CACHE_LINE_SIZE-1)))
+                                   + CACHE_LINE_SIZE);
+-        memset(gridPtr->points, GRID_POINT_EMPTY, (n * sizeof(long)));
++        //memset(gridPtr->points, GRID_POINT_EMPTY, (n * sizeof(long)));
++        for (long i = 0; i < n; ++i) {
++          XTM_LOCKABLE_VALUE(gridPtr->points[i].value) = GRID_POINT_EMPTY;
++          XTM_LOCKABLE_INIT(gridPtr->points[i].value);
++        }
+     }
+ 
+     return gridPtr;
+@@ -175,10 +184,13 @@
+     assert(srcGridPtr->depth  == dstGridPtr->depth);
+ 
+     long n = srcGridPtr->width * srcGridPtr->height * srcGridPtr->depth;
+-    memcpy(dstGridPtr->points, srcGridPtr->points, (n * sizeof(long)));
++    //memcpy(dstGridPtr->points, srcGridPtr->points, (n * sizeof(*dstGridPtr->points)));
++    for (long i = 0; i < n; ++i) {
++      XTM_LOCKABLE_VALUE(dstGridPtr->points[i].value) = XTM_LOCKABLE_VALUE(srcGridPtr->points[i].value);
++    }
+ 
+ #ifdef USE_EARLY_RELEASE
+-    long* srcPoints = srcGridPtr->points;
++    grid_point* srcPoints = srcGridPtr->points;
+     long i;
+     long i_step = (CACHE_LINE_SIZE / sizeof(srcPoints[0]));
+     for (i = 0; i < n; i+=i_step) {
+@@ -213,7 +225,7 @@
+ long*
+ grid_getPointRef (grid_t* gridPtr, long x, long y, long z)
+ {
+-    return &(gridPtr->points[(z * gridPtr->height + y) * gridPtr->width + x]);
++    return &XTM_LOCKABLE_VALUE(gridPtr->points[(z * gridPtr->height + y) * gridPtr->width + x].value);
+ }
+ 
+ 
+@@ -228,7 +240,7 @@
+     long height = gridPtr->height;
+     long width  = gridPtr->width;
+     long area = height * width;
+-    long index3d = (gridPointPtr - gridPtr->points);
++    long index3d = (((grid_point*)gridPointPtr) - gridPtr->points);
+     (*zPtr) = index3d / area;
+     long index2d = index3d % area;
+     (*yPtr) = index2d / width;
+@@ -313,12 +325,12 @@
+     long n = vector_getSize(pointVectorPtr);
+ 
+     for (i = 1; i < (n-1); i++) {
+-        long* gridPointPtr = (long*)vector_at(pointVectorPtr, i);
+-        long value = (long)TM_SHARED_READ(*gridPointPtr);
++        grid_point* gridPointPtr = (grid_point*)vector_at(pointVectorPtr, i);
++        long value = (long)TM_SHARED_READ(gridPointPtr->value);
+         if (value != GRID_POINT_EMPTY) {
+             TM_RESTART();
+         }
+-        TM_SHARED_WRITE(*gridPointPtr, GRID_POINT_FULL);
++        TM_SHARED_WRITE(gridPointPtr->value, GRID_POINT_FULL);
+     }
+ }
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/labyrinth/grid.h stamp-0.9.10/labyrinth/grid.h
+--- stamp-0.9.10-prepatch/labyrinth/grid.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/labyrinth/grid.h	2017-03-20 14:49:53.000000000 +0000
+@@ -76,13 +76,16 @@
+ #include "types.h"
+ #include "vector.h"
+ 
++typedef struct grid_point {
++    XTM_DECL_LOCKABLE(long, value);
++} grid_point;
+ 
+ typedef struct grid {
+     long width;
+     long height;
+     long depth;
+-    long* points;
+-    long* points_unaligned;
++    grid_point* points;
++    grid_point* points_unaligned;
+ } grid_t;
+ 
+ enum {
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/labyrinth/labyrinth.c stamp-0.9.10/labyrinth/labyrinth.c
+--- stamp-0.9.10-prepatch/labyrinth/labyrinth.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/labyrinth/labyrinth.c	2017-03-20 14:49:53.000000000 +0000
+@@ -218,6 +218,7 @@
+     TIMER_T startTime;
+     TIMER_READ(startTime);
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -226,6 +227,7 @@
+ #else
+     thread_start(router_solve, (void*)&routerArg);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_T stopTime;
+     TIMER_READ(stopTime);
+@@ -239,6 +241,7 @@
+     }
+     printf("Paths routed    = %li\n", numPathRouted);
+     printf("Elapsed time    = %f seconds\n", TIMER_DIFF_SECONDS(startTime, stopTime));
++    printf("STAMP time = %f\n", TIMER_DIFF_SECONDS(startTime, stopTime));
+ 
+     /*
+      * Check solution and clean up
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/force_cxx_linker.cpp stamp-0.9.10/lib/force_cxx_linker.cpp
+--- stamp-0.9.10-prepatch/lib/force_cxx_linker.cpp	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/lib/force_cxx_linker.cpp	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1 @@
++static int empty_file;
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/hashtable.h stamp-0.9.10/lib/hashtable.h
+--- stamp-0.9.10-prepatch/lib/hashtable.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/hashtable.h	2017-03-20 14:49:53.000000000 +0000
+@@ -105,7 +105,7 @@
+     list_t** buckets;
+     long numBucket;
+ #ifdef HASHTABLE_SIZE_FIELD
+-    long size;
++    XTM_DECL_LOCKABLE(long, size);
+ #endif
+     ulong_t (*hash)(const void*);
+     long (*comparePairs)(const pair_t*, const pair_t*);
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/heap.c stamp-0.9.10/lib/heap.c
+--- stamp-0.9.10-prepatch/lib/heap.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/heap.c	2017-03-20 14:49:53.000000000 +0000
+@@ -75,10 +75,14 @@
+ #include "tm.h"
+ #include "types.h"
+ 
++typedef struct heap_item {
++  XTM_DECL_LOCKABLE(void*, value);
++} HeapItem;
++
+ struct heap {
+-    void** elements;
+-    long size;
+-    long capacity;
++    XTM_DECL_LOCKABLE(HeapItem*, elements);
++    XTM_DECL_LOCKABLE(long, size);
++    XTM_DECL_LOCKABLE(long, capacity);
+     long (*compare)(const void*, const void*);
+ };
+ 
+@@ -114,10 +118,16 @@
+     heapPtr = (heap_t*)malloc(sizeof(heap_t));
+     if (heapPtr) {
+         long capacity = ((initCapacity > 0) ? (initCapacity) : (1));
+-        heapPtr->elements = (void**)malloc(capacity * sizeof(void*));
+-        assert(heapPtr->elements);
+-        heapPtr->size = 0;
+-        heapPtr->capacity = capacity;
++        XTM_LOCKABLE_VALUE(heapPtr->elements) = (HeapItem*)malloc(capacity * sizeof(HeapItem));
++        for (long i = 0; i < capacity; ++i) {
++          XTM_LOCKABLE_INIT(XTM_LOCKABLE_VALUE(heapPtr->elements)[i].value);
++        }
++        XTM_LOCKABLE_INIT(heapPtr->elements);
++        assert(XTM_LOCKABLE_VALUE(heapPtr->elements));
++        XTM_LOCKABLE_VALUE(heapPtr->size) = 0;
++        XTM_LOCKABLE_INIT(heapPtr->size);
++        XTM_LOCKABLE_VALUE(heapPtr->capacity) = capacity;
++        XTM_LOCKABLE_INIT(heapPtr->capacity);
+         heapPtr->compare = compare;
+     }
+ 
+@@ -132,7 +142,7 @@
+ void
+ heap_free (heap_t* heapPtr)
+ {
+-    free(heapPtr->elements);
++    free(XTM_LOCKABLE_VALUE(heapPtr->elements));
+     free(heapPtr);
+ }
+ 
+@@ -144,20 +154,20 @@
+ static void
+ siftUp (heap_t* heapPtr, long startIndex)
+ {
+-    void** elements = heapPtr->elements;
++    HeapItem* elements = XTM_LOCKABLE_VALUE(heapPtr->elements);
+     long (*compare)(const void*, const void*) = heapPtr->compare;
+ 
+     long index = startIndex;
+     while ((index > 1)) {
+         long parentIndex = PARENT(index);
+-        void* parentPtr = elements[parentIndex];
+-        void* thisPtr   = elements[index];
++        void* parentPtr = XTM_LOCKABLE_VALUE(elements[parentIndex].value);
++        void* thisPtr   = XTM_LOCKABLE_VALUE(elements[index].value);
+         if (compare(parentPtr, thisPtr) >= 0) {
+             break;
+         }
+         void* tmpPtr = parentPtr;
+-        elements[parentIndex] = thisPtr;
+-        elements[index] = tmpPtr;
++        XTM_LOCKABLE_VALUE(elements[parentIndex].value) = thisPtr;
++        XTM_LOCKABLE_VALUE(elements[index].value) = tmpPtr;
+         index = parentIndex;
+     }
+ }
+@@ -170,20 +180,20 @@
+ static void
+ TMsiftUp (TM_ARGDECL  heap_t* heapPtr, long startIndex)
+ {
+-    void** elements = (void**)TM_SHARED_READ_P(heapPtr->elements);
++    HeapItem* elements = (HeapItem*)TM_SHARED_READ_P(heapPtr->elements);
+     long (*compare)(const void*, const void*) = heapPtr->compare;
+ 
+     long index = startIndex;
+     while ((index > 1)) {
+         long parentIndex = PARENT(index);
+-        void* parentPtr = (void*)TM_SHARED_READ_P(elements[parentIndex]);
+-        void* thisPtr   = (void*)TM_SHARED_READ_P(elements[index]);
++        void* parentPtr = (void*)TM_SHARED_READ_P(elements[parentIndex].value);
++        void* thisPtr   = (void*)TM_SHARED_READ_P(elements[index].value);
+         if (compare(parentPtr, thisPtr) >= 0) {
+             break;
+         }
+         void* tmpPtr = parentPtr;
+-        TM_SHARED_WRITE_P(elements[parentIndex], thisPtr);
+-        TM_SHARED_WRITE_P(elements[index], tmpPtr);
++        TM_SHARED_WRITE_P(elements[parentIndex].value, thisPtr);
++        TM_SHARED_WRITE_P(elements[index].value, tmpPtr);
+         index = parentIndex;
+     }
+ }
+@@ -197,27 +207,30 @@
+ bool_t
+ heap_insert (heap_t* heapPtr, void* dataPtr)
+ {
+-    long size = heapPtr->size;
+-    long capacity = heapPtr->capacity;
++    long size = XTM_LOCKABLE_VALUE(heapPtr->size);
++    long capacity = XTM_LOCKABLE_VALUE(heapPtr->capacity);
+ 
+     if ((size + 1) >= capacity) {
+         long newCapacity = capacity * 2;
+-        void** newElements = (void**)malloc(newCapacity * sizeof(void*));
++        HeapItem* newElements = (HeapItem*)malloc(newCapacity * sizeof(HeapItem));
+         if (newElements == NULL) {
+             return FALSE;
+         }
+-        heapPtr->capacity = newCapacity;
++        for (long i = 0; i < newCapacity; ++i) {
++          XTM_LOCKABLE_INIT(newElements[i].value);
++        }
++        XTM_LOCKABLE_VALUE(heapPtr->capacity) = newCapacity;
+         long i;
+-        void** elements = heapPtr->elements;
++        HeapItem* elements = XTM_LOCKABLE_VALUE(heapPtr->elements);
+         for (i = 0; i <= size; i++) {
+-            newElements[i] = elements[i];
++            XTM_LOCKABLE_VALUE(newElements[i].value) = XTM_LOCKABLE_VALUE(elements[i].value);
+         }
+-        free(heapPtr->elements);
+-        heapPtr->elements = newElements;
++        free(XTM_LOCKABLE_VALUE(heapPtr->elements));
++        XTM_LOCKABLE_VALUE(heapPtr->elements) = newElements;
+     }
+ 
+-    size = ++(heapPtr->size);
+-    heapPtr->elements[size] = dataPtr;
++    size = ++(XTM_LOCKABLE_VALUE(heapPtr->size));
++    XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(heapPtr->elements)[size].value) = dataPtr;
+     siftUp(heapPtr, size);
+ 
+     return TRUE;
+@@ -237,24 +250,27 @@
+ 
+     if ((size + 1) >= capacity) {
+         long newCapacity = capacity * 2;
+-        void** newElements = (void**)TM_MALLOC(newCapacity * sizeof(void*));
++        HeapItem* newElements = (HeapItem*)TM_MALLOC(newCapacity * sizeof(HeapItem));
+         if (newElements == NULL) {
+             return FALSE;
+         }
++        for (long i = 0; i < newCapacity; ++i) {
++          XTM_LOCKABLE_INIT(newElements[i].value);
++        }
+         TM_SHARED_WRITE(heapPtr->capacity, newCapacity);
+         long i;
+-        void** elements = TM_SHARED_READ_P(heapPtr->elements);
++        HeapItem* elements = (HeapItem*) TM_SHARED_READ_P(heapPtr->elements);
+         for (i = 0; i <= size; i++) {
+-            newElements[i] = (void*)TM_SHARED_READ_P(elements[i]);
++            XTM_LOCKABLE_VALUE(newElements[i].value) = (void*)TM_SHARED_READ_P(elements[i].value);
+         }
+-        TM_FREE(heapPtr->elements);
++        TM_FREE(XTM_LOCKABLE_VALUE(heapPtr->elements));
+         TM_SHARED_WRITE(heapPtr->elements, newElements);
+     }
+ 
+     size++;
+     TM_SHARED_WRITE(heapPtr->size, size);
+-    void** elements = (void**)TM_SHARED_READ_P(heapPtr->elements);
+-    TM_SHARED_WRITE_P(elements[size], dataPtr);
++    HeapItem* elements = (HeapItem*)TM_SHARED_READ_P(heapPtr->elements);
++    TM_SHARED_WRITE_P(elements[size].value, dataPtr);
+     TMsiftUp(TM_ARG  heapPtr, size);
+ 
+     return TRUE;
+@@ -268,10 +284,10 @@
+ static void
+ heapify (heap_t* heapPtr, long startIndex)
+ {
+-    void** elements = heapPtr->elements;
++    HeapItem* elements = XTM_LOCKABLE_VALUE(heapPtr->elements);
+     long (*compare)(const void*, const void*) = heapPtr->compare;
+ 
+-    long size = heapPtr->size;
++    long size = XTM_LOCKABLE_VALUE(heapPtr->size);
+     long index = startIndex;
+ 
+     while (1) {
+@@ -281,7 +297,7 @@
+         long maxIndex = -1;
+ 
+         if ((leftIndex <= size) &&
+-            (compare(elements[leftIndex], elements[index]) > 0))
++            (compare(XTM_LOCKABLE_VALUE(elements[leftIndex].value), XTM_LOCKABLE_VALUE(elements[index].value)) > 0))
+         {
+             maxIndex = leftIndex;
+         } else {
+@@ -289,7 +305,7 @@
+         }
+ 
+         if ((rightIndex <= size) &&
+-            (compare(elements[rightIndex], elements[maxIndex]) > 0))
++            (compare(XTM_LOCKABLE_VALUE(elements[rightIndex].value), XTM_LOCKABLE_VALUE(elements[maxIndex].value)) > 0))
+         {
+             maxIndex = rightIndex;
+         }
+@@ -297,9 +313,9 @@
+         if (maxIndex == index) {
+             break;
+         } else {
+-            void* tmpPtr = elements[index];
+-            elements[index] = elements[maxIndex];
+-            elements[maxIndex] = tmpPtr;
++            void* tmpPtr = XTM_LOCKABLE_VALUE(elements[index].value);
++            XTM_LOCKABLE_VALUE(elements[index].value) = XTM_LOCKABLE_VALUE(elements[maxIndex].value);
++            XTM_LOCKABLE_VALUE(elements[maxIndex].value) = tmpPtr;
+             index = maxIndex;
+         }
+     }
+@@ -313,7 +329,7 @@
+ static void
+ TMheapify (TM_ARGDECL  heap_t* heapPtr, long startIndex)
+ {
+-    void** elements = (void**)TM_SHARED_READ_P(heapPtr->elements);
++    HeapItem* elements = (HeapItem*)TM_SHARED_READ_P(heapPtr->elements);
+     long (*compare)(const void*, const void*) = heapPtr->compare;
+ 
+     long size = (long)TM_SHARED_READ(heapPtr->size);
+@@ -326,8 +342,8 @@
+         long maxIndex = -1;
+ 
+         if ((leftIndex <= size) &&
+-            (compare((void*)TM_SHARED_READ_P(elements[leftIndex]),
+-                     (void*)TM_SHARED_READ_P(elements[index])) > 0))
++            (compare((void*)TM_SHARED_READ_P(elements[leftIndex].value),
++                     (void*)TM_SHARED_READ_P(elements[index].value)) > 0))
+         {
+             maxIndex = leftIndex;
+         } else {
+@@ -335,8 +351,8 @@
+         }
+ 
+         if ((rightIndex <= size) &&
+-            (compare((void*)TM_SHARED_READ_P(elements[rightIndex]),
+-                     (void*)TM_SHARED_READ_P(elements[maxIndex])) > 0))
++            (compare((void*)TM_SHARED_READ_P(elements[rightIndex].value),
++                     (void*)TM_SHARED_READ_P(elements[maxIndex].value)) > 0))
+         {
+             maxIndex = rightIndex;
+         }
+@@ -344,10 +360,10 @@
+         if (maxIndex == index) {
+             break;
+         } else {
+-            void* tmpPtr = (void*)TM_SHARED_READ_P(elements[index]);
+-            TM_SHARED_WRITE_P(elements[index],
+-                              (void*)TM_SHARED_READ(elements[maxIndex]));
+-            TM_SHARED_WRITE_P(elements[maxIndex], tmpPtr);
++            void* tmpPtr = (void*)TM_SHARED_READ_P(elements[index].value);
++            TM_SHARED_WRITE_P(elements[index].value,
++                              (void*)TM_SHARED_READ(elements[maxIndex].value));
++            TM_SHARED_WRITE_P(elements[maxIndex].value, tmpPtr);
+             index = maxIndex;
+         }
+     }
+@@ -363,16 +379,16 @@
+ void*
+ heap_remove (heap_t* heapPtr)
+ {
+-    long size = heapPtr->size;
++    long size = XTM_LOCKABLE_VALUE(heapPtr->size);
+ 
+     if (size < 1) {
+         return NULL;
+     }
+ 
+-    void** elements = heapPtr->elements;
+-    void* dataPtr = elements[1];
+-    elements[1] = elements[size];
+-    heapPtr->size = size - 1;
++    HeapItem* elements = XTM_LOCKABLE_VALUE(heapPtr->elements);
++    void* dataPtr = XTM_LOCKABLE_VALUE(elements[1].value);
++    XTM_LOCKABLE_VALUE(elements[1].value) = XTM_LOCKABLE_VALUE(elements[size].value);
++    XTM_LOCKABLE_VALUE(heapPtr->size) = size - 1;
+     heapify(heapPtr, 1);
+ 
+     return dataPtr;
+@@ -393,9 +409,9 @@
+         return NULL;
+     }
+ 
+-    void** elements = (void**)TM_SHARED_READ_P(heapPtr->elements);
+-    void* dataPtr = (void*)TM_SHARED_READ_P(elements[1]);
+-    TM_SHARED_WRITE_P(elements[1], TM_SHARED_READ_P(elements[size]));
++    HeapItem* elements = (HeapItem*)TM_SHARED_READ_P(heapPtr->elements);
++    void* dataPtr = (void*)TM_SHARED_READ_P(elements[1].value);
++    TM_SHARED_WRITE_P(elements[1].value, TM_SHARED_READ_P(elements[size].value));
+     TM_SHARED_WRITE(heapPtr->size, (size - 1));
+     TMheapify(TM_ARG  heapPtr, 1);
+ 
+@@ -410,13 +426,13 @@
+ bool_t
+ heap_isValid (heap_t* heapPtr)
+ {
+-    long size = heapPtr->size;
++    long size = XTM_LOCKABLE_VALUE(heapPtr->size);
+     long (*compare)(const void*, const void*) = heapPtr->compare;
+-    void** elements = heapPtr->elements;
++    HeapItem* elements = XTM_LOCKABLE_VALUE(heapPtr->elements);
+ 
+     long i;
+     for (i = 1; i < size; i++) {
+-        if (compare(elements[i+1], elements[PARENT(i+1)]) > 0) {
++        if (compare(XTM_LOCKABLE_VALUE(elements[i+1].value), XTM_LOCKABLE_VALUE(elements[PARENT(i+1)].value)) > 0) {
+             return FALSE;
+         }
+     }
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/heap.h stamp-0.9.10/lib/heap.h
+--- stamp-0.9.10-prepatch/lib/heap.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/heap.h	2017-03-20 14:49:53.000000000 +0000
+@@ -76,6 +76,10 @@
+ #include "tm.h"
+ #include "types.h"
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
++
+ typedef struct heap heap_t;
+ 
+ 
+@@ -145,6 +149,9 @@
+ #define TMHEAP_INSERT(h, d)             TMheap_insert(TM_ARG  (h), (d))
+ #define TMHEAP_REMOVE(h)                TMheap_remove(TM_ARG  (h))
+ 
++#ifdef __cplusplus
++}
++#endif
+ 
+ #endif /* HEAP_H */
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/list.c stamp-0.9.10/lib/list.c
+--- stamp-0.9.10-prepatch/lib/list.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/list.c	2017-03-20 14:49:53.000000000 +0000
+@@ -135,7 +135,7 @@
+ bool_t
+ list_iter_hasNext (list_iter_t* itPtr, list_t* listPtr)
+ {
+-    return (((*itPtr)->nextPtr != NULL) ? TRUE : FALSE);
++    return ((XTM_LOCKABLE_VALUE((*itPtr)->nextPtr) != NULL) ? TRUE : FALSE);
+ }
+ 
+ 
+@@ -159,7 +159,7 @@
+ void*
+ list_iter_next (list_iter_t* itPtr, list_t* listPtr)
+ {
+-    *itPtr = (*itPtr)->nextPtr;
++    *itPtr = XTM_LOCKABLE_VALUE((*itPtr)->nextPtr);
+ 
+     return (*itPtr)->dataPtr;
+ }
+@@ -193,7 +193,8 @@
+     }
+ 
+     nodePtr->dataPtr = dataPtr;
+-    nodePtr->nextPtr = NULL;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(nodePtr->nextPtr);
+ 
+     return nodePtr;
+ }
+@@ -213,7 +214,8 @@
+     }
+ 
+     nodePtr->dataPtr = dataPtr;
+-    nodePtr->nextPtr = NULL;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(nodePtr->nextPtr);
+ 
+     return nodePtr;
+ }
+@@ -233,7 +235,8 @@
+     }
+ 
+     nodePtr->dataPtr = dataPtr;
+-    nodePtr->nextPtr = NULL;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(nodePtr->nextPtr);
+ 
+     return nodePtr;
+ }
+@@ -254,8 +257,10 @@
+     }
+ 
+     listPtr->head.dataPtr = NULL;
+-    listPtr->head.nextPtr = NULL;
+-    listPtr->size = 0;
++    XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(listPtr->head.nextPtr);
++    XTM_LOCKABLE_VALUE(listPtr->size) = 0;
++    XTM_LOCKABLE_INIT(listPtr->size);
+ 
+     if (compare == NULL) {
+         listPtr->compare = &compareDataPtrAddresses; /* default */
+@@ -282,8 +287,10 @@
+     }
+ 
+     listPtr->head.dataPtr = NULL;
+-    listPtr->head.nextPtr = NULL;
+-    listPtr->size = 0;
++    XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(listPtr->head.nextPtr);
++    XTM_LOCKABLE_VALUE(listPtr->size) = 0;
++    XTM_LOCKABLE_INIT(listPtr->size);
+ 
+     if (compare == NULL) {
+         listPtr->compare = &compareDataPtrAddresses; /* default */
+@@ -310,8 +317,10 @@
+     }
+ 
+     listPtr->head.dataPtr = NULL;
+-    listPtr->head.nextPtr = NULL;
+-    listPtr->size = 0;
++    XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) = NULL;
++    XTM_LOCKABLE_INIT(listPtr->head.nextPtr);
++    XTM_LOCKABLE_VALUE(listPtr->size) = 0;
++    XTM_LOCKABLE_INIT(listPtr->size);
+ 
+     if (compare == NULL) {
+         listPtr->compare = &compareDataPtrAddresses; /* default */
+@@ -364,7 +373,7 @@
+ freeList (list_node_t* nodePtr)
+ {
+     if (nodePtr != NULL) {
+-        freeList(nodePtr->nextPtr);
++        freeList(XTM_LOCKABLE_VALUE(nodePtr->nextPtr));
+         freeNode(nodePtr);
+     }
+ }
+@@ -378,7 +387,7 @@
+ PfreeList (list_node_t* nodePtr)
+ {
+     if (nodePtr != NULL) {
+-        PfreeList(nodePtr->nextPtr);
++        PfreeList(XTM_LOCKABLE_VALUE(nodePtr->nextPtr));
+         PfreeNode(nodePtr);
+     }
+ }
+@@ -406,7 +415,7 @@
+ void
+ list_free (list_t* listPtr)
+ {
+-    freeList(listPtr->head.nextPtr);
++    freeList(XTM_LOCKABLE_VALUE(listPtr->head.nextPtr));
+     free(listPtr);
+ }
+ 
+@@ -418,7 +427,7 @@
+ void
+ Plist_free (list_t* listPtr)
+ {
+-    PfreeList(listPtr->head.nextPtr);
++    PfreeList(XTM_LOCKABLE_VALUE(listPtr->head.nextPtr));
+     P_FREE(listPtr);
+ }
+ 
+@@ -444,7 +453,7 @@
+ bool_t
+ list_isEmpty (list_t* listPtr)
+ {
+-    return (listPtr->head.nextPtr == NULL);
++    return (XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) == NULL);
+ }
+ 
+ 
+@@ -469,7 +478,7 @@
+ long
+ list_getSize (list_t* listPtr)
+ {
+-    return listPtr->size;
++    return XTM_LOCKABLE_VALUE(listPtr->size);
+ }
+ 
+ 
+@@ -493,9 +502,9 @@
+ findPrevious (list_t* listPtr, void* dataPtr)
+ {
+     list_node_t* prevPtr = &(listPtr->head);
+-    list_node_t* nodePtr = prevPtr->nextPtr;
++    list_node_t* nodePtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+ 
+-    for (; nodePtr != NULL; nodePtr = nodePtr->nextPtr) {
++    for (; nodePtr != NULL; nodePtr = XTM_LOCKABLE_VALUE(nodePtr->nextPtr)) {
+         if (listPtr->compare(nodePtr->dataPtr, dataPtr) >= 0) {
+             return prevPtr;
+         }
+@@ -541,7 +550,7 @@
+     list_node_t* nodePtr;
+     list_node_t* prevPtr = findPrevious(listPtr, dataPtr);
+ 
+-    nodePtr = prevPtr->nextPtr;
++    nodePtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+ 
+     if ((nodePtr == NULL) ||
+         (listPtr->compare(nodePtr->dataPtr, dataPtr) != 0)) {
+@@ -587,7 +596,7 @@
+     list_node_t* currPtr;
+ 
+     prevPtr = findPrevious(listPtr, dataPtr);
+-    currPtr = prevPtr->nextPtr;
++    currPtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+ 
+ #ifdef LIST_NO_DUPLICATES
+     if ((currPtr != NULL) &&
+@@ -601,9 +610,9 @@
+         return FALSE;
+     }
+ 
+-    nodePtr->nextPtr = currPtr;
+-    prevPtr->nextPtr = nodePtr;
+-    listPtr->size++;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = currPtr;
++    XTM_LOCKABLE_VALUE(prevPtr->nextPtr) = nodePtr;
++    XTM_LOCKABLE_VALUE(listPtr->size)++;
+ 
+     return TRUE;
+ }
+@@ -622,7 +631,7 @@
+     list_node_t* currPtr;
+ 
+     prevPtr = findPrevious(listPtr, dataPtr);
+-    currPtr = prevPtr->nextPtr;
++    currPtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+ 
+ #ifdef LIST_NO_DUPLICATES
+     if ((currPtr != NULL) &&
+@@ -636,9 +645,9 @@
+         return FALSE;
+     }
+ 
+-    nodePtr->nextPtr = currPtr;
+-    prevPtr->nextPtr = nodePtr;
+-    listPtr->size++;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = currPtr;
++    XTM_LOCKABLE_VALUE(prevPtr->nextPtr) = nodePtr;
++    XTM_LOCKABLE_VALUE(listPtr->size)++;
+ 
+     return TRUE;
+ }
+@@ -671,7 +680,7 @@
+         return FALSE;
+     }
+ 
+-    nodePtr->nextPtr = currPtr;
++    XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = currPtr;
+     TM_SHARED_WRITE_P(prevPtr->nextPtr, nodePtr);
+     TM_SHARED_WRITE(listPtr->size, (TM_SHARED_READ(listPtr->size) + 1));
+ 
+@@ -692,15 +701,15 @@
+ 
+     prevPtr = findPrevious(listPtr, dataPtr);
+ 
+-    nodePtr = prevPtr->nextPtr;
++    nodePtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+     if ((nodePtr != NULL) &&
+         (listPtr->compare(nodePtr->dataPtr, dataPtr) == 0))
+     {
+-        prevPtr->nextPtr = nodePtr->nextPtr;
+-        nodePtr->nextPtr = NULL;
++        XTM_LOCKABLE_VALUE(prevPtr->nextPtr) = XTM_LOCKABLE_VALUE(nodePtr->nextPtr);
++        XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = NULL;
+         freeNode(nodePtr);
+-        listPtr->size--;
+-        assert(listPtr->size >= 0);
++        XTM_LOCKABLE_VALUE(listPtr->size)--;
++        assert(XTM_LOCKABLE_VALUE(listPtr->size) >= 0);
+         return TRUE;
+     }
+ 
+@@ -721,15 +730,15 @@
+ 
+     prevPtr = findPrevious(listPtr, dataPtr);
+ 
+-    nodePtr = prevPtr->nextPtr;
++    nodePtr = XTM_LOCKABLE_VALUE(prevPtr->nextPtr);
+     if ((nodePtr != NULL) &&
+         (listPtr->compare(nodePtr->dataPtr, dataPtr) == 0))
+     {
+-        prevPtr->nextPtr = nodePtr->nextPtr;
+-        nodePtr->nextPtr = NULL;
++        XTM_LOCKABLE_VALUE(prevPtr->nextPtr) = XTM_LOCKABLE_VALUE(nodePtr->nextPtr);
++        XTM_LOCKABLE_VALUE(nodePtr->nextPtr) = NULL;
+         PfreeNode(nodePtr);
+-        listPtr->size--;
+-        assert(listPtr->size >= 0);
++        XTM_LOCKABLE_VALUE(listPtr->size)--;
++        assert(XTM_LOCKABLE_VALUE(listPtr->size) >= 0);
+         return TRUE;
+     }
+ 
+@@ -758,7 +767,7 @@
+         TM_SHARED_WRITE_P(nodePtr->nextPtr, (struct list_node*)NULL);
+         TMfreeNode(TM_ARG  nodePtr);
+         TM_SHARED_WRITE(listPtr->size, (TM_SHARED_READ(listPtr->size) - 1));
+-        assert(listPtr->size >= 0);
++        assert(XTM_LOCKABLE_VALUE(listPtr->size) >= 0);
+         return TRUE;
+     }
+ 
+@@ -774,9 +783,9 @@
+ void
+ list_clear (list_t* listPtr)
+ {
+-    freeList(listPtr->head.nextPtr);
+-    listPtr->head.nextPtr = NULL;
+-    listPtr->size = 0;
++    freeList(XTM_LOCKABLE_VALUE(listPtr->head.nextPtr));
++    XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) = NULL;
++    XTM_LOCKABLE_VALUE(listPtr->size) = 0;
+ }
+ 
+ 
+@@ -788,9 +797,9 @@
+ void
+ Plist_clear (list_t* listPtr)
+ {
+-    PfreeList(listPtr->head.nextPtr);
+-    listPtr->head.nextPtr = NULL;
+-    listPtr->size = 0;
++    PfreeList(XTM_LOCKABLE_VALUE(listPtr->head.nextPtr));
++    XTM_LOCKABLE_VALUE(listPtr->head.nextPtr) = NULL;
++    XTM_LOCKABLE_VALUE(listPtr->size) = 0;
+ }
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/list.h stamp-0.9.10/lib/list.h
+--- stamp-0.9.10-prepatch/lib/list.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/list.h	2017-03-20 14:49:53.000000000 +0000
+@@ -85,7 +85,7 @@
+ 
+ typedef struct list_node {
+     void* dataPtr;
+-    struct list_node* nextPtr;
++    XTM_DECL_LOCKABLE(struct list_node*, nextPtr);
+ } list_node_t;
+ 
+ typedef list_node_t* list_iter_t;
+@@ -93,7 +93,7 @@
+ typedef struct list {
+     list_node_t head;
+     long (*compare)(const void*, const void*);   /* returns {-1,0,1}, 0 -> equal */
+-    long size;
++    XTM_DECL_LOCKABLE(long, size);
+ } list_t;
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/queue.c stamp-0.9.10/lib/queue.c
+--- stamp-0.9.10-prepatch/lib/queue.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/queue.c	2017-03-21 17:35:59.000000000 +0000
+@@ -76,13 +76,17 @@
+ #include "tm.h"
+ #include "types.h"
+ #include "queue.h"
++#include <stdint.h>
+ 
++typedef struct queue_item {
++  XTM_DECL_LOCKABLE(uintptr_t, value);
++} queue_item;
+ 
+ struct queue {
+-    long pop; /* points before element to pop */
+-    long push;
+-    long capacity;
+-    void** elements;
++    XTM_DECL_LOCKABLE(long, pop); /* points before element to pop */
++    XTM_DECL_LOCKABLE(long, push);
++    XTM_DECL_LOCKABLE(long, capacity);
++    XTM_DECL_LOCKABLE(queue_item*, elements);
+ };
+ 
+ enum config {
+@@ -101,14 +105,22 @@
+ 
+     if (queuePtr) {
+         long capacity = ((initCapacity < 2) ? 2 : initCapacity);
+-        queuePtr->elements = (void**)malloc(capacity * sizeof(void*));
+-        if (queuePtr->elements == NULL) {
++        XTM_LOCKABLE_VALUE(queuePtr->elements) = (queue_item*)malloc(capacity * sizeof(*XTM_LOCKABLE_VALUE(queuePtr->elements)));
++        XTM_LOCKABLE_INIT(queuePtr->elements);
++        for (int i = 0; i < capacity; ++i) {
++          XTM_LOCKABLE_INIT(XTM_LOCKABLE_VALUE(queuePtr->elements)[i].value);
++        }
++
++        if (XTM_LOCKABLE_VALUE(queuePtr->elements) == NULL) {
+             free(queuePtr);
+             return NULL;
+         }
+-        queuePtr->pop      = capacity - 1;
+-        queuePtr->push     = 0;
+-        queuePtr->capacity = capacity;
++        XTM_LOCKABLE_VALUE(queuePtr->pop)      = capacity - 1;
++        XTM_LOCKABLE_INIT(queuePtr->pop);
++        XTM_LOCKABLE_VALUE(queuePtr->push)     = 0;
++        XTM_LOCKABLE_INIT(queuePtr->push);
++        XTM_LOCKABLE_VALUE(queuePtr->capacity) = capacity;
++        XTM_LOCKABLE_INIT(queuePtr->capacity);
+     }
+ 
+     return queuePtr;
+@@ -126,14 +138,21 @@
+ 
+     if (queuePtr) {
+         long capacity = ((initCapacity < 2) ? 2 : initCapacity);
+-        queuePtr->elements = (void**)P_MALLOC(capacity * sizeof(void*));
+-        if (queuePtr->elements == NULL) {
++        XTM_LOCKABLE_VALUE(queuePtr->elements) = (queue_item*)P_MALLOC(capacity * sizeof(*XTM_LOCKABLE_VALUE(queuePtr->elements)));
++        XTM_LOCKABLE_INIT(queuePtr->elements);
++        if (XTM_LOCKABLE_VALUE(queuePtr->elements) == NULL) {
+             free(queuePtr);
+             return NULL;
+         }
+-        queuePtr->pop      = capacity - 1;
+-        queuePtr->push     = 0;
+-        queuePtr->capacity = capacity;
++        for (int i = 0; i < capacity; ++i) {
++          XTM_LOCKABLE_INIT(XTM_LOCKABLE_VALUE(queuePtr->elements)[i].value);
++        }
++        XTM_LOCKABLE_VALUE(queuePtr->pop)      = capacity - 1;
++        XTM_LOCKABLE_INIT(queuePtr->pop);
++        XTM_LOCKABLE_VALUE(queuePtr->push)     = 0;
++        XTM_LOCKABLE_INIT(queuePtr->push);
++        XTM_LOCKABLE_VALUE(queuePtr->capacity) = capacity;
++        XTM_LOCKABLE_INIT(queuePtr->capacity);
+     }
+ 
+     return queuePtr;
+@@ -151,14 +170,21 @@
+ 
+     if (queuePtr) {
+         long capacity = ((initCapacity < 2) ? 2 : initCapacity);
+-        queuePtr->elements = (void**)TM_MALLOC(capacity * sizeof(void*));
+-        if (queuePtr->elements == NULL) {
++        XTM_LOCKABLE_VALUE(queuePtr->elements) = (queue_item*)TM_MALLOC(capacity * sizeof(*XTM_LOCKABLE_VALUE(queuePtr->elements)));
++        XTM_LOCKABLE_INIT(queuePtr->elements);
++        if (XTM_LOCKABLE_VALUE(queuePtr->elements) == NULL) {
+             free(queuePtr);
+             return NULL;
+         }
+-        queuePtr->pop      = capacity - 1;
+-        queuePtr->push     = 0;
+-        queuePtr->capacity = capacity;
++        for (int i = 0; i < capacity; ++i) {
++          XTM_LOCKABLE_INIT(XTM_LOCKABLE_VALUE(queuePtr->elements)[i].value);
++        }
++        XTM_LOCKABLE_VALUE(queuePtr->pop)      = capacity - 1;
++        XTM_LOCKABLE_INIT(queuePtr->pop);
++        XTM_LOCKABLE_VALUE(queuePtr->push)     = 0;
++        XTM_LOCKABLE_INIT(queuePtr->push);
++        XTM_LOCKABLE_VALUE(queuePtr->capacity) = capacity;
++        XTM_LOCKABLE_INIT(queuePtr->capacity);
+     }
+ 
+     return queuePtr;
+@@ -172,7 +198,7 @@
+ void
+ queue_free (queue_t* queuePtr)
+ {
+-    free(queuePtr->elements);
++    free(XTM_LOCKABLE_VALUE(queuePtr->elements));
+     free(queuePtr);
+ }
+ 
+@@ -184,7 +210,7 @@
+ void
+ Pqueue_free (queue_t* queuePtr)
+ {
+-    P_FREE(queuePtr->elements);
++    P_FREE(XTM_LOCKABLE_VALUE(queuePtr->elements));
+     P_FREE(queuePtr);
+ }
+ 
+@@ -196,7 +222,7 @@
+ void
+ TMqueue_free (TM_ARGDECL  queue_t* queuePtr)
+ {
+-    TM_FREE((void**)TM_SHARED_READ_P(queuePtr->elements));
++    TM_FREE((queue_item*)TM_SHARED_READ_P(queuePtr->elements));
+     TM_FREE(queuePtr);
+ }
+ 
+@@ -208,9 +234,9 @@
+ bool_t
+ queue_isEmpty (queue_t* queuePtr)
+ {
+-    long pop      = queuePtr->pop;
+-    long push     = queuePtr->push;
+-    long capacity = queuePtr->capacity;
++    long pop      = XTM_LOCKABLE_VALUE(queuePtr->pop);
++    long push     = XTM_LOCKABLE_VALUE(queuePtr->push);
++    long capacity = XTM_LOCKABLE_VALUE(queuePtr->capacity);
+ 
+     return (((pop + 1) % capacity == push) ? TRUE : FALSE);
+ }
+@@ -223,8 +249,8 @@
+ void
+ queue_clear (queue_t* queuePtr)
+ {
+-    queuePtr->pop  = queuePtr->capacity - 1;
+-    queuePtr->push = 0;
++    XTM_LOCKABLE_VALUE(queuePtr->pop)  = XTM_LOCKABLE_VALUE(queuePtr->capacity) - 1;
++    XTM_LOCKABLE_VALUE(queuePtr->push) = 0;
+ }
+ 
+ 
+@@ -250,9 +276,9 @@
+ void
+ queue_shuffle (queue_t* queuePtr, random_t* randomPtr)
+ {
+-    long pop      = queuePtr->pop;
+-    long push     = queuePtr->push;
+-    long capacity = queuePtr->capacity;
++    long pop      = XTM_LOCKABLE_VALUE(queuePtr->pop);
++    long push     = XTM_LOCKABLE_VALUE(queuePtr->push);
++    long capacity = XTM_LOCKABLE_VALUE(queuePtr->capacity);
+ 
+     long numElement;
+     if (pop < push) {
+@@ -261,7 +287,7 @@
+         numElement = capacity - (pop - push + 1);
+     }
+ 
+-    void** elements = queuePtr->elements;
++    queue_item* elements = XTM_LOCKABLE_VALUE(queuePtr->elements);
+     long i;
+     long base = pop + 1;
+     for (i = 0; i < numElement; i++) {
+@@ -269,9 +295,9 @@
+         long r2 = random_generate(randomPtr) % numElement;
+         long i1 = (base + r1) % capacity;
+         long i2 = (base + r2) % capacity;
+-        void* tmp = elements[i1];
+-        elements[i1] = elements[i2];
+-        elements[i2] = tmp;
++        uintptr_t tmp = XTM_LOCKABLE_VALUE(elements[i1].value);
++        XTM_LOCKABLE_VALUE(elements[i1].value) = XTM_LOCKABLE_VALUE(elements[i2].value);
++        XTM_LOCKABLE_VALUE(elements[i2].value) = tmp;
+     }
+ }
+ 
+@@ -283,9 +309,9 @@
+ bool_t
+ queue_push (queue_t* queuePtr, void* dataPtr)
+ {
+-    long pop      = queuePtr->pop;
+-    long push     = queuePtr->push;
+-    long capacity = queuePtr->capacity;
++    long pop      = XTM_LOCKABLE_VALUE(queuePtr->pop);
++    long push     = XTM_LOCKABLE_VALUE(queuePtr->push);
++    long capacity = XTM_LOCKABLE_VALUE(queuePtr->capacity);
+ 
+     assert(pop != push);
+ 
+@@ -294,38 +320,41 @@
+     if (newPush == pop) {
+ 
+         long newCapacity = capacity * QUEUE_GROWTH_FACTOR;
+-        void** newElements = (void**)malloc(newCapacity * sizeof(void*));
++        queue_item* newElements = (queue_item*)malloc(newCapacity * sizeof(*newElements));
+         if (newElements == NULL) {
+             return FALSE;
+         }
++        for (int i = 0; i < newCapacity; ++i) {
++            XTM_LOCKABLE_INIT(newElements[i].value);
++        }
+ 
+         long dst = 0;
+-        void** elements = queuePtr->elements;
++        queue_item* elements = XTM_LOCKABLE_VALUE(queuePtr->elements);
+         if (pop < push) {
+             long src;
+             for (src = (pop + 1); src < push; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+         } else {
+             long src;
+             for (src = (pop + 1); src < capacity; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+             for (src = 0; src < push; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+         }
+ 
+         free(elements);
+-        queuePtr->elements = newElements;
+-        queuePtr->pop      = newCapacity - 1;
+-        queuePtr->capacity = newCapacity;
++        XTM_LOCKABLE_VALUE(queuePtr->elements) = newElements;
++        XTM_LOCKABLE_VALUE(queuePtr->pop)      = newCapacity - 1;
++        XTM_LOCKABLE_VALUE(queuePtr->capacity) = newCapacity;
+         push = dst;
+         newPush = push + 1; /* no need modulo */
+     }
+ 
+-    queuePtr->elements[push] = dataPtr;
+-    queuePtr->push = newPush;
++    XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(queuePtr->elements)[push].value) = (uintptr_t) dataPtr;
++    XTM_LOCKABLE_VALUE(queuePtr->push) = newPush;
+ 
+     return TRUE;
+ }
+@@ -338,9 +367,9 @@
+ bool_t
+ Pqueue_push (queue_t* queuePtr, void* dataPtr)
+ {
+-    long pop      = queuePtr->pop;
+-    long push     = queuePtr->push;
+-    long capacity = queuePtr->capacity;
++    long pop      = XTM_LOCKABLE_VALUE(queuePtr->pop);
++    long push     = XTM_LOCKABLE_VALUE(queuePtr->push);
++    long capacity = XTM_LOCKABLE_VALUE(queuePtr->capacity);
+ 
+     assert(pop != push);
+ 
+@@ -349,39 +378,42 @@
+     if (newPush == pop) {
+ 
+         long newCapacity = capacity * QUEUE_GROWTH_FACTOR;
+-        void** newElements = (void**)P_MALLOC(newCapacity * sizeof(void*));
++        queue_item* newElements = (queue_item*)P_MALLOC(newCapacity * sizeof(*newElements));
+         if (newElements == NULL) {
+             return FALSE;
+         }
++        for (int i = 0; i < newCapacity; ++i) {
++            XTM_LOCKABLE_INIT(newElements[i].value);
++        }
+ 
+         long dst = 0;
+-        void** elements = queuePtr->elements;
++        queue_item* elements = XTM_LOCKABLE_VALUE(queuePtr->elements);
+         if (pop < push) {
+             long src;
+             for (src = (pop + 1); src < push; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+         } else {
+             long src;
+             for (src = (pop + 1); src < capacity; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+             for (src = 0; src < push; src++, dst++) {
+-                newElements[dst] = elements[src];
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = XTM_LOCKABLE_VALUE(elements[src].value);
+             }
+         }
+ 
+         P_FREE(elements);
+-        queuePtr->elements = newElements;
+-        queuePtr->pop      = newCapacity - 1;
+-        queuePtr->capacity = newCapacity;
++        XTM_LOCKABLE_VALUE(queuePtr->elements) = newElements;
++        XTM_LOCKABLE_VALUE(queuePtr->pop)      = newCapacity - 1;
++        XTM_LOCKABLE_VALUE(queuePtr->capacity) = newCapacity;
+         push = dst;
+         newPush = push + 1; /* no need modulo */
+ 
+     }
+ 
+-    queuePtr->elements[push] = dataPtr;
+-    queuePtr->push = newPush;
++    XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(queuePtr->elements)[push].value) = (uintptr_t) dataPtr;
++    XTM_LOCKABLE_VALUE(queuePtr->push) = newPush;
+ 
+     return TRUE;
+ }
+@@ -404,25 +436,28 @@
+     long newPush = (push + 1) % capacity;
+     if (newPush == pop) {
+         long newCapacity = capacity * QUEUE_GROWTH_FACTOR;
+-        void** newElements = (void**)TM_MALLOC(newCapacity * sizeof(void*));
++        queue_item* newElements = (queue_item*)TM_MALLOC(newCapacity * sizeof(*newElements));
+         if (newElements == NULL) {
+             return FALSE;
+         }
++        for (int i = 0; i < newCapacity; ++i) {
++            XTM_LOCKABLE_INIT(newElements[i].value);
++        }
+ 
+         long dst = 0;
+-        void** elements = (void**)TM_SHARED_READ_P(queuePtr->elements);
++        queue_item* elements = (queue_item*)TM_SHARED_READ_P(queuePtr->elements);
+         if (pop < push) {
+             long src;
+             for (src = (pop + 1); src < push; src++, dst++) {
+-                newElements[dst] = (void*)TM_SHARED_READ_P(elements[src]);
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = (uintptr_t)TM_SHARED_READ_P(elements[src].value);
+             }
+         } else {
+             long src;
+             for (src = (pop + 1); src < capacity; src++, dst++) {
+-                newElements[dst] = (void*)TM_SHARED_READ_P(elements[src]);
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = (uintptr_t)TM_SHARED_READ_P(elements[src].value);
+             }
+             for (src = 0; src < push; src++, dst++) {
+-                newElements[dst] = (void*)TM_SHARED_READ_P(elements[src]);
++                XTM_LOCKABLE_VALUE(newElements[dst].value) = (uintptr_t)TM_SHARED_READ_P(elements[src].value);
+             }
+         }
+ 
+@@ -435,8 +470,8 @@
+ 
+     }
+ 
+-    void** elements = (void**)TM_SHARED_READ_P(queuePtr->elements);
+-    TM_SHARED_WRITE_P(elements[push], dataPtr);
++    queue_item* elements = (queue_item*)TM_SHARED_READ_P(queuePtr->elements);
++    TM_SHARED_WRITE_P(elements[push].value, dataPtr);
+     TM_SHARED_WRITE(queuePtr->push, newPush);
+ 
+     return TRUE;
+@@ -450,19 +485,19 @@
+ void*
+ queue_pop (queue_t* queuePtr)
+ {
+-    long pop      = queuePtr->pop;
+-    long push     = queuePtr->push;
+-    long capacity = queuePtr->capacity;
++    long pop      = XTM_LOCKABLE_VALUE(queuePtr->pop);
++    long push     = XTM_LOCKABLE_VALUE(queuePtr->push);
++    long capacity = XTM_LOCKABLE_VALUE(queuePtr->capacity);
+ 
+     long newPop = (pop + 1) % capacity;
+     if (newPop == push) {
+         return NULL;
+     }
+ 
+-    void* dataPtr = queuePtr->elements[newPop];
+-    queuePtr->pop = newPop;
++    uintptr_t dataPtr = XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(queuePtr->elements)[newPop].value);
++    XTM_LOCKABLE_VALUE(queuePtr->pop) = newPop;
+ 
+-    return dataPtr;
++    return (void*) dataPtr;
+ }
+ 
+ 
+@@ -482,11 +517,11 @@
+         return NULL;
+     }
+ 
+-    void** elements = (void**)TM_SHARED_READ_P(queuePtr->elements);
+-    void* dataPtr = (void*)TM_SHARED_READ_P(elements[newPop]);
++    queue_item* elements = (queue_item*)TM_SHARED_READ_P(queuePtr->elements);
++    uintptr_t dataPtr = (uintptr_t) TM_SHARED_READ_P(elements[newPop].value);
+     TM_SHARED_WRITE(queuePtr->pop, newPop);
+ 
+-    return dataPtr;
++    return (void*) dataPtr;
+ }
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/rbtree.c stamp-0.9.10/lib/rbtree.c
+--- stamp-0.9.10-prepatch/lib/rbtree.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/rbtree.c	2017-03-20 14:49:53.000000000 +0000
+@@ -90,17 +90,17 @@
+ 
+ 
+ typedef struct node {
+-    void* k;
+-    void* v;
+-    struct node* p;
+-    struct node* l;
+-    struct node* r;
+-    long c;
++    XTM_DECL_LOCKABLE(void*, k);
++    XTM_DECL_LOCKABLE(void*, v);
++    XTM_DECL_LOCKABLE(struct node*, p);
++    XTM_DECL_LOCKABLE(struct node*, l);
++    XTM_DECL_LOCKABLE(struct node*, r);
++    XTM_DECL_LOCKABLE(long, c);
+ } node_t;
+ 
+ 
+ struct rbtree {
+-    node_t* root;
++    XTM_DECL_LOCKABLE(node_t*, root);
+     long (*compare)(const void*, const void*);   /* returns {-1,0,1}, 0 -> equal */
+ };
+ 
+@@ -108,9 +108,9 @@
+ #define STA(a,v)            *(a) = (v)
+ #define LDV(a)              (a)
+ #define STV(a,v)            (a) = (v)
+-#define LDF(o,f)            ((o)->f)
+-#define STF(o,f,v)          ((o)->f) = (v)
+-#define LDNODE(o,f)         ((node_t*)(LDF((o),f)))
++#define LDF(o,f)            (XTM_LOCKABLE_VALUE((o)->f))
++#define STF(o,f,v)          do { XTM_LOCKABLE_VALUE((o)->f) = (v); } while (0)
++#define LDNODE(o,f)         ((LDF((o),f)))
+ 
+ #define TX_LDA(a)           TM_SHARED_READ(*(a))
+ #define TX_STA(a,v)         TM_SHARED_WRITE(*(a), v)
+@@ -120,7 +120,7 @@
+ #define TX_LDF_P(o,f)       ((void*)TM_SHARED_READ_P((o)->f))
+ #define TX_STF(o,f,v)       TM_SHARED_WRITE((o)->f, v)
+ #define TX_STF_P(o,f,v)     TM_SHARED_WRITE_P((o)->f, v)
+-#define TX_LDNODE(o,f)      ((node_t*)(TX_LDF_P((o),f)))
++#define TX_LDNODE(o,f)      ((TX_LDF_P((o),f)))
+ 
+ /* =============================================================================
+  * DECLARATION OF TM_CALLABLE FUNCTIONS
+@@ -1087,10 +1087,10 @@
+ static node_t*
+ firstEntry (rbtree_t* s)
+ {
+-    node_t* p = s->root;
++    node_t* p = XTM_LOCKABLE_VALUE(s->root);
+     if (p != NULL) {
+-        while (p->l != NULL) {
+-            p = p->l;
++        while (XTM_LOCKABLE_VALUE(p->l) != NULL) {
++            p = XTM_LOCKABLE_VALUE(p->l);
+         }
+     }
+     return p;
+@@ -1157,8 +1157,8 @@
+         return 1;
+     }
+ 
+-    height_left  = verifyRedBlack(root->l, depth+1);
+-    height_right = verifyRedBlack(root->r, depth+1);
++    height_left  = verifyRedBlack(XTM_LOCKABLE_VALUE(root->l), depth+1);
++    height_right = verifyRedBlack(XTM_LOCKABLE_VALUE(root->r), depth+1);
+     if (height_left == 0 || height_right == 0) {
+         return 0;
+     }
+@@ -1166,26 +1166,26 @@
+         printf(" Imbalance @depth=%ld : %ld %ld\n", depth, height_left, height_right);
+     }
+ 
+-    if (root->l != NULL && root->l->p != root) {
++    if (XTM_LOCKABLE_VALUE(root->l) != NULL && XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(root->l)->p) != root) {
+        printf(" lineage\n");
+     }
+-    if (root->r != NULL && root->r->p != root) {
++    if (XTM_LOCKABLE_VALUE(root->r) != NULL && XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(root->r)->p) != root) {
+        printf(" lineage\n");
+     }
+ 
+     /* Red-Black alternation */
+-    if (root->c == RED) {
+-        if (root->l != NULL && root->l->c != BLACK) {
++    if (XTM_LOCKABLE_VALUE(root->c) == RED) {
++        if (XTM_LOCKABLE_VALUE(root->l) != NULL && XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(root->l)->c) != BLACK) {
+           printf("VERIFY %d\n", __LINE__);
+           return 0;
+         }
+-        if (root->r != NULL && root->r->c != BLACK) {
++        if (XTM_LOCKABLE_VALUE(root->r) != NULL && XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(root->r)->c) != BLACK) {
+           printf("VERIFY %d\n", __LINE__);
+           return 0;
+         }
+         return height_left;
+     }
+-    if (root->c != BLACK) {
++    if (XTM_LOCKABLE_VALUE(root->c) != BLACK) {
+         printf("VERIFY %d\n", __LINE__);
+         return 0;
+     }
+@@ -1201,7 +1201,7 @@
+ long
+ rbtree_verify (rbtree_t* s, long verbose)
+ {
+-    node_t* root = s->root;
++    node_t* root = XTM_LOCKABLE_VALUE(s->root);
+     if (root == NULL) {
+         return 1;
+     }
+@@ -1209,14 +1209,14 @@
+        printf("Integrity check: ");
+     }
+ 
+-    if (root->p != NULL) {
++    if (XTM_LOCKABLE_VALUE(root->p) != NULL) {
+         printf("  (WARNING) root %lX parent=%lX\n",
+-               (unsigned long)root, (unsigned long)root->p);
++               (unsigned long)root, (unsigned long)XTM_LOCKABLE_VALUE(root->p));
+         return -1;
+     }
+-    if (root->c != BLACK) {
++    if (XTM_LOCKABLE_VALUE(root->c) != BLACK) {
+         printf("  (WARNING) root %lX color=%lX\n",
+-               (unsigned long)root, (unsigned long)root->c);
++               (unsigned long)root, (unsigned long)XTM_LOCKABLE_VALUE(root->c));
+     }
+ 
+     /* Weak check of binary-tree property */
+@@ -1224,22 +1224,22 @@
+     node_t* its = firstEntry(s);
+     while (its != NULL) {
+         ctr++;
+-        node_t* child = its->l;
+-        if (child != NULL && child->p != its) {
++        node_t* child = XTM_LOCKABLE_VALUE(its->l);
++        if (child != NULL && XTM_LOCKABLE_VALUE(child->p) != its) {
+             printf("Bad parent\n");
+         }
+-        child = its->r;
+-        if (child != NULL && child->p != its) {
++        child = XTM_LOCKABLE_VALUE(its->r);
++        if (child != NULL && XTM_LOCKABLE_VALUE(child->p) != its) {
+             printf("Bad parent\n");
+         }
+         node_t* nxt = successor(its);
+         if (nxt == NULL) {
+             break;
+         }
+-        if (s->compare(its->k, nxt->k) >= 0) {
++        if (s->compare(XTM_LOCKABLE_VALUE(its->k), XTM_LOCKABLE_VALUE(nxt->k)) >= 0) {
+             printf("Key order %lX (%ld %ld) %lX (%ld %ld)\n",
+-                   (unsigned long)its, (long)its->k, (long)its->v,
+-                   (unsigned long)nxt, (long)nxt->k, (long)nxt->v);
++                   (unsigned long)its, (long)XTM_LOCKABLE_VALUE(its->k), (long)XTM_LOCKABLE_VALUE(its->v),
++                   (unsigned long)nxt, (long)XTM_LOCKABLE_VALUE(nxt->k), (long)XTM_LOCKABLE_VALUE(nxt->v));
+             return -3;
+         }
+         its = nxt;
+@@ -1275,7 +1275,8 @@
+     rbtree_t* n = (rbtree_t* )malloc(sizeof(*n));
+     if (n) {
+         n->compare = (compare ? compare : &compareKeysDefault);
+-        n->root = NULL;
++        XTM_LOCKABLE_VALUE(n->root) = NULL;
++        XTM_LOCKABLE_INIT(n->root);
+     }
+     return n;
+ }
+@@ -1291,7 +1292,8 @@
+     rbtree_t* n = (rbtree_t* )TM_MALLOC(sizeof(*n));
+     if (n){
+         n->compare = (compare ? compare : &compareKeysDefault);
+-        n->root = NULL;
++        XTM_LOCKABLE_VALUE(n->root) = NULL;
++        XTM_LOCKABLE_INIT(n->root);
+     }
+     return n;
+ }
+@@ -1329,8 +1331,8 @@
+ freeNode (node_t* n)
+ {
+     if (n) {
+-        freeNode(n->l);
+-        freeNode(n->r);
++        freeNode(XTM_LOCKABLE_VALUE(n->l));
++        freeNode(XTM_LOCKABLE_VALUE(n->r));
+         releaseNode(n);
+     }
+ }
+@@ -1344,8 +1346,8 @@
+ TMfreeNode (TM_ARGDECL  node_t* n)
+ {
+     if (n) {
+-        TMfreeNode(TM_ARG  n->l);
+-        TMfreeNode(TM_ARG  n->r);
++        TMfreeNode(TM_ARG  XTM_LOCKABLE_VALUE(n->l));
++        TMfreeNode(TM_ARG  XTM_LOCKABLE_VALUE(n->r));
+         TMreleaseNode(TM_ARG  n);
+     }
+ }
+@@ -1358,7 +1360,7 @@
+ void
+ rbtree_free (rbtree_t* r)
+ {
+-    freeNode(r->root);
++    freeNode(XTM_LOCKABLE_VALUE(r->root));
+     free(r);
+ }
+ 
+@@ -1370,7 +1372,7 @@
+ void
+ TMrbtree_free (TM_ARGDECL  rbtree_t* r)
+ {
+-    TMfreeNode(TM_ARG  r->root);
++    TMfreeNode(TM_ARG XTM_LOCKABLE_VALUE(r->root));
+     TM_FREE(r);
+ }
+ 
+@@ -1383,6 +1385,12 @@
+ getNode ()
+ {
+     node_t* n = (node_t*)malloc(sizeof(*n));
++    XTM_LOCKABLE_INIT(n->k);
++    XTM_LOCKABLE_INIT(n->v);
++    XTM_LOCKABLE_INIT(n->p);
++    XTM_LOCKABLE_INIT(n->l);
++    XTM_LOCKABLE_INIT(n->r);
++    XTM_LOCKABLE_INIT(n->c);
+     return n;
+ }
+ 
+@@ -1395,6 +1403,12 @@
+ TMgetNode (TM_ARGDECL_ALONE)
+ {
+     node_t* n = (node_t*)TM_MALLOC(sizeof(*n));
++    XTM_LOCKABLE_INIT(n->k);
++    XTM_LOCKABLE_INIT(n->v);
++    XTM_LOCKABLE_INIT(n->p);
++    XTM_LOCKABLE_INIT(n->l);
++    XTM_LOCKABLE_INIT(n->r);
++    XTM_LOCKABLE_INIT(n->c);
+     return n;
+ }
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/thread.c stamp-0.9.10/lib/thread.c
+--- stamp-0.9.10-prepatch/lib/thread.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/thread.c	2017-03-21 17:35:07.000000000 +0000
+@@ -71,8 +71,13 @@
+ 
+ #include <assert.h>
+ #include <stdlib.h>
++#ifdef USE_PAPI
++#include <papi.h>
++#include <papiStdEventDefs.h>
++#endif
+ #include "thread.h"
+ #include "types.h"
++#include "tm.h"
+ 
+ static THREAD_LOCAL_T    global_threadId;
+ static long              global_numThread       = 1;
+@@ -84,7 +89,137 @@
+ static void*             global_argPtr          = NULL;
+ static volatile bool_t   global_doShutdown      = FALSE;
+ 
++#ifdef USE_PAPI
++static int isInit;
++static int isSampling;
++static __thread int papiEventSet = PAPI_NULL;
++
++static int papiEvents[3] = {PAPI_L3_TCA, PAPI_L3_TCM, PAPI_TOT_CYC};
++static const char* papiNames[3] = {"L3_ACCESSES", "L3_MISSES", "CyclesCounter"};
++
++//static int papiEvents[2] = {PAPI_TOT_INS, PAPI_TOT_CYC};
++//static const char* papiNames[2] = {"Instructions", "Cycles"};
++static const int maxThreads = 128;
++//static int papiEvents[2] = {PAPI_L1_DCM, PAPI_TOT_CYC};
++//static const char* papiNames[2] = {"L1DCMCounter", "CyclesCounter"};
++static long_long papiResults[(sizeof(papiEvents)/sizeof(*papiEvents)) * 128];
++
++static void handle_error(const char* str) {
++  fprintf(stderr, str);
++  abort();
++}
++
++static void begin(long threadId) {
++  if (threadId == 0) {
++    if (isSampling)
++      handle_error("Sampling already begun");
++    isSampling = 1;
++  } else if (!isSampling) {
++    return;
++  }
++
++  int rv;
++
++  // Init library
++  if (!isInit) {
++    rv = PAPI_library_init(PAPI_VER_CURRENT);
++    if (rv != PAPI_VER_CURRENT && rv < 0) {
++      handle_error("PAPI library version mismatch!");
++    }
++    if (rv < 0) handle_error(PAPI_strerror(rv));
++    if ((rv = PAPI_thread_init(pthread_self)) != PAPI_OK)
++      handle_error(PAPI_strerror(rv));
++    isInit = 1;
++  }
++  // Register thread
++  if ((rv = PAPI_register_thread()) != PAPI_OK) 
++    handle_error(PAPI_strerror(rv));
++  // Create the Event Set
++  if ((rv = PAPI_create_eventset(&papiEventSet)) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++  if ((rv = PAPI_add_events(papiEventSet, papiEvents, sizeof(papiEvents)/sizeof(*papiEvents))) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++  // Start counting events in the event set
++  if ((rv = PAPI_start(papiEventSet)) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++}
++
++static void end(long threadId) {
++  if (threadId == 0) {
++    if (!isSampling)
++      handle_error("Sampling not yet begun");
++    isSampling = 0;
++  } else if (!isSampling) {
++    return;
++  }
++
++  int rv;
++
++  long_long results[sizeof(papiNames)/sizeof(*papiNames)];
++
++  // Get the values
++  if ((rv = PAPI_stop(papiEventSet, results)) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++  // Remove all events in the eventset
++  if ((rv = PAPI_cleanup_eventset(papiEventSet)) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++  // Free all memory and data structures, EventSet must be empty.
++  if ((rv = PAPI_destroy_eventset(&papiEventSet)) != PAPI_OK)
++    handle_error(PAPI_strerror(rv));
++  // Unregister thread
++  if ((rv = PAPI_unregister_thread()) != PAPI_OK) 
++    handle_error(PAPI_strerror(rv));
++
++  if (threadId >= maxThreads)
++    handle_error("too many threads");
++
++  for (unsigned i = 0; i < sizeof(papiNames)/sizeof(*papiNames); ++i)
++    papiResults[sizeof(papiEvents)/sizeof(*papiEvents) * threadId + i] += results[i];
++
++  if (threadId == 0) {
++    printf("\n");
++    printf("STATTYPE,LOOP,CATEGORY,n,sum");
++    for (int t = 0; t < maxThreads; ++t) {
++      printf(",T%d", t);
++    }
++    printf("\n");
++    for (unsigned i = 0; i < sizeof(papiNames)/sizeof(*papiNames); ++i) {
++      long_long sum = 0;
++      for (int t = 0; t < maxThreads; ++t) {
++        sum += papiResults[sizeof(papiEvents)/sizeof(*papiEvents) * t + i];
++      }
++      printf("STAT,(NULL),%s,%d,%ld", papiNames[i], maxThreads, sum);
++      for (int t = 0; t < maxThreads; ++t) {
++        printf(",%ld", papiResults[sizeof(papiEvents)/sizeof(*papiEvents) * t + i]);
++      }
++      printf("\n");
++    }
++  }
++}
++
++void thread_begin_timing() {
++  begin(0);
++}
+ 
++void thread_end_timing() {
++  end(0);
++}
++static void thread_begin(long threadId) {
++  if (threadId == 0)
++    return;
++  begin(threadId);
++}
++static void thread_end(long threadId) {
++  if (threadId == 0)
++    return;
++  end(threadId);
++}
++#else
++void thread_end_timing() { }
++void thread_begin_timing() { }
++static void thread_begin(long x) { }
++static void thread_end(long x) { }
++#endif
+ /* =============================================================================
+  * threadWait
+  * -- Synchronizes all threads to start/stop parallel section
+@@ -102,7 +237,9 @@
+         if (global_doShutdown) {
+             break;
+         }
++        thread_begin(threadId);
+         global_funcPtr(global_argPtr);
++        thread_end(threadId);
+         THREAD_BARRIER(global_barrierPtr, threadId); /* wait for end parallel */
+         if (threadId == 0) {
+             break;
+@@ -120,6 +257,12 @@
+ void
+ thread_startup (long numThread)
+ {
++#if !defined(STM) && !defined(HTM)
++    if (numThread > 1) {
++      printf("This application does not support multiple threads\n");
++      abort();
++    }
++#endif
+     long i;
+ 
+     global_numThread = numThread;
+@@ -348,9 +491,9 @@
+ void
+ thread_barrier_wait()
+ {
+-#ifndef SIMULATOR
++//#ifndef SIMULATOR
+     long threadId = thread_getId();
+-#endif /* !SIMULATOR */
++//#endif /* !SIMULATOR */
+     THREAD_BARRIER(global_barrierPtr, threadId);
+ }
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/thread.h stamp-0.9.10/lib/thread.h
+--- stamp-0.9.10-prepatch/lib/thread.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/thread.h	2017-03-20 14:49:53.000000000 +0000
+@@ -134,6 +134,9 @@
+ } thread_barrier_t;
+ 
+ 
++void thread_begin_timing();
++void thread_end_timing();
++
+ /* =============================================================================
+  * thread_startup
+  * -- Create pool of secondary threads
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/tm.h stamp-0.9.10/lib/tm.h
+--- stamp-0.9.10-prepatch/lib/tm.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/tm.h	2017-03-20 14:49:53.000000000 +0000
+@@ -111,36 +111,34 @@
+  *
+  * =============================================================================
+  */
+-#ifdef SIMULATOR
+ 
+-#  include <simapi.h>
++#include <stdio.h>
+ 
+-#  define MAIN(argc, argv)              void mainX (int argc, \
+-                                                    const char** argv, \
+-                                                    const char** envp)
+-#  define MAIN_RETURN(val)              return /* value is ignored */
+-
+-#  define GOTO_SIM()                    goto_sim()
+-#  define GOTO_REAL()                   goto_real()
+-#  define IS_IN_SIM()                   (inSimulation)
+-
+-#  define SIM_GET_NUM_CPU(var)          ({ \
+-                                            if (!IS_IN_SIM()) { \
+-                                                GOTO_SIM(); \
+-                                                var = Sim_GetNumCpus(); \
+-                                                GOTO_REAL(); \
+-                                            } else { \
+-                                                var = Sim_GetNumCpus(); \
+-                                            } \
+-                                            var; \
+-                                        })
+-
+-#  define TM_PRINTF                     Sim_Print
+-#  define TM_PRINT0                     Sim_Print0
+-#  define TM_PRINT1                     Sim_Print1
+-#  define TM_PRINT2                     Sim_Print2
+-#  define TM_PRINT3                     Sim_Print3
++#define MAIN(argc, argv)              int main (int argc, char** argv)
++#define MAIN_RETURN(val)              return val
+ 
++#define GOTO_SIM()                    /* nothing */
++#define GOTO_REAL()                   /* nothing */
++#define IS_IN_SIM()                   (0)
++
++#define SIM_GET_NUM_CPU(var)          /* nothing */
++
++#define TM_PRINTF                     printf
++#define TM_PRINT0                     printf
++#define TM_PRINT1                     printf
++#define TM_PRINT2                     printf
++#define TM_PRINT3                     printf
++
++#ifdef STM
++#  include <stm.h>
++#  include <mod_mem.h>
++#  define P_MEMORY_STARTUP(numThread)   /* nothing */
++#  define P_MEMORY_SHUTDOWN()           /* nothing */
++#  define P_MALLOC(size)                malloc(size)
++#  define P_FREE(ptr)                   free(ptr)
++#  define TM_MALLOC(size)               stm_malloc(size)
++#  define TM_FREE(ptr)                  stm_free(ptr, sizeof(stm_word_t))
++#elif defined(STAMP_PALLOC)
+ #  include "memory.h"
+ #  define P_MEMORY_STARTUP(numThread)   do { \
+                                             bool_t status; \
+@@ -150,31 +148,24 @@
+                                             assert(status); \
+                                         } while (0) /* enforce comma */
+ #  define P_MEMORY_SHUTDOWN()           memory_destroy()
+-
+-#else /* !SIMULATOR */
+-
+-#  include <stdio.h>
+-
+-#  define MAIN(argc, argv)              int main (int argc, char** argv)
+-#  define MAIN_RETURN(val)              return val
+-
+-#  define GOTO_SIM()                    /* nothing */
+-#  define GOTO_REAL()                   /* nothing */
+-#  define IS_IN_SIM()                   (0)
+-
+-#  define SIM_GET_NUM_CPU(var)          /* nothing */
+-
+-#  define TM_PRINTF                     printf
+-#  define TM_PRINT0                     printf
+-#  define TM_PRINT1                     printf
+-#  define TM_PRINT2                     printf
+-#  define TM_PRINT3                     printf
+-
++#  define TM_MALLOC(size)               memory_get(thread_getId(), size)
++#  define TM_FREE(ptr)                  
++#  define P_MALLOC(size)                memory_get(thread_getId(), size)
++#  define P_FREE(ptr)                   
++#else
+ #  define P_MEMORY_STARTUP(numThread)   /* nothing */
+ #  define P_MEMORY_SHUTDOWN()           /* nothing */
+-
+-#endif /* !SIMULATOR */
+-
++#  define P_MALLOC(size)                malloc(size)
++#  define P_FREE(ptr)                   free(ptr)
++#  define TM_MALLOC(size)               malloc(size)
++#  define TM_FREE(ptr)                  free(ptr)
++#endif
++
++#ifndef XTM_DECL_LOCKABLE
++#  define XTM_DECL_LOCKABLE(type, name) type name
++#  define XTM_LOCKABLE_INIT(expr) 
++#  define XTM_LOCKABLE_VALUE(expr) (expr)
++#endif
+ 
+ /* =============================================================================
+  * Transactional Memory System Interface
+@@ -274,15 +265,11 @@
+ 
+ #ifdef HTM
+ 
+-#  ifndef SIMULATOR
+-#    error HTM requries SIMULATOR
+-#  endif
+-
+ #  include <assert.h>
+-#  include <tmapi.h>
+ #  include "memory.h"
+ #  include "thread.h"
+ #  include "types.h"
++#  include <speculation.h>
+ 
+ #  define TM_ARG                        /* nothing */
+ #  define TM_ARG_ALONE                  /* nothing */
+@@ -291,40 +278,21 @@
+ #  define TM_CALLABLE                   /* nothing */
+ 
+ #  define TM_STARTUP(numThread)         /* nothing */
+-#  define TM_SHUTDOWN()                 /* nothing */
+-
++#  define TM_SHUTDOWN()                 if (getenv("STM_STATS")) { \
++    TmReport_t r; \
++    tm_get_all_stats(&r); \
++    printf("transactions: %lu rollbacks: %lu jmv: %lu maxroll: %lu other: %lu\n", \
++        r.totalTransactions, r.totalRollbacks, \
++        r.totalSerializedJMV, r.totalSerializedMAXRB, r.totalSerializedOTHER); \
++   }
+ #  define TM_THREAD_ENTER()             /* nothing */
+ #  define TM_THREAD_EXIT()              /* nothing */
+ 
+-#  define P_MALLOC(size)                memory_get(thread_getId(), size)
+-#  define P_FREE(ptr)                   /* TODO: thread local free is non-trivial */
+-#  define TM_MALLOC(size)               memory_get(thread_getId(), size)
+-#  define TM_FREE(ptr)                  /* TODO: thread local free is non-trivial */
+-
+-#  ifdef OTM
+-
+-#    define thread_getId()              omp_get_thread_num()
+-#    define thread_getNumThread()       omp_get_num_threads()
+-#    define thread_startup(numThread)   omp_set_num_threads(numThread)
+-#    define thread_shutdown()           /* nothing */
+-#    define thread_barrier_wait();      _Pragma ("omp barrier")
+-#    define TM_BEGIN()                  _Pragma ("omp transaction") {
+-#    define TM_BEGIN_RO()               _Pragma ("omp transaction") {
+-#    define TM_END()                    }
+-#    define TM_RESTART()                _TM_Abort()
+-
+-#    define TM_EARLY_RELEASE(var)       TM_Release(&(var))
+-
+-#  else /* !OTM */
+-
+-#    define TM_BEGIN()                    TM_BeginClosed()
+-#    define TM_BEGIN_RO()                 TM_BeginClosed()
+-#    define TM_END()                      TM_EndClosed()
+-#    define TM_RESTART()                  _TM_Abort()
+-#    define TM_EARLY_RELEASE(var)         TM_Release(&(var))
+-
+-#  endif /* !OTM */
+-
++#  define TM_BEGIN()                    _Pragma ("tm_atomic") {
++#  define TM_BEGIN_RO()                 _Pragma ("tm_atomic") {
++#  define TM_END()                      }
++#  define TM_RESTART()                  abort()
++#  define TM_EARLY_RELEASE(var)         
+ 
+ /* =============================================================================
+  * STM - Software Transactional Memory
+@@ -334,125 +302,49 @@
+ #elif defined(STM)
+ 
+ #  include <string.h>
+-#  include <stm.h>
+-#  include "thread.h"
+-
+-#  if defined (OTM)
+-
+-#    define TM_ARG                        /* nothing */
+-#    define TM_ARG_ALONE                  /* nothing */
+-#    define TM_ARGDECL                    /* nothing */
+-#    define TM_ARGDECL_ALONE              /* nothing */
+-#    define TM_CALLABLE                   _Pragma ("omp tm_function")
+-
+-#    define thread_getId()                omp_get_thread_num()
+-#    define thread_getNumThread()         omp_get_num_threads()
+-#    define thread_startup(numThread)     omp_set_num_threads(numThread)
+-#    define thread_shutdown()             /* nothing */
+-
+-#  else /* !OTM */
+-
+-#    define TM_ARG                        STM_SELF,
+-#    define TM_ARG_ALONE                  STM_SELF
+-#    define TM_ARGDECL                    STM_THREAD_T* TM_ARG
+-#    define TM_ARGDECL_ALONE              STM_THREAD_T* TM_ARG_ALONE
+-#    define TM_CALLABLE                   /* nothing */
+-
+-#endif /* !OTM */
+-
+-#  ifdef SIMULATOR
+-
+-#    ifdef OTM
+-
+-#      define TM_STARTUP(numThread)       STM_STARTUP(); \
+-                                          STM_NEW_THREADS(numThread)
+-#      define TM_SHUTDOWN()               STM_SHUTDOWN()
+-
+-#      define TM_THREAD_ENTER()           omp_set_self()
+-#      define TM_THREAD_EXIT()            /* Nothing */
+-#      define thread_barrier_wait();      _Pragma ("omp barrier")
+-
+-#      define P_MALLOC(size)              memory_get(thread_getId(), size)
+-#      define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
+-#      define TM_MALLOC(size)             memory_get(thread_getId(), size)
+-#      define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
+-
+-#    else /* !OTM */
+-
+-#      define TM_STARTUP(numThread)       STM_STARTUP(); \
+-                                          STM_NEW_THREADS(numThread)
+-#      define TM_SHUTDOWN()               STM_SHUTDOWN()
+-
+-#      define TM_THREAD_ENTER()           TM_ARGDECL_ALONE = \
+-                                              STM_GET_THREAD(thread_getId()); \
+-                                          STM_SET_SELF(TM_ARG_ALONE)
+ 
+-#      define TM_THREAD_EXIT()            STM_FREE_THREAD(TM_ARG_ALONE)
+-
+-#      define P_MALLOC(size)              memory_get(thread_getId(), size)
+-#      define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
+-#      define TM_MALLOC(size)             memory_get(thread_getId(), size)
+-#      define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
+-
+-#    endif /* !OTM */
+-
+-#  else /* !SIMULATOR */
+-
+-#    ifdef OTM
+-
+-#      include <omp.h>
+-#      include "tl2.h"
+-
+-#      define TM_STARTUP(numThread)     STM_STARTUP()
+-#      define TM_SHUTDOWN()             STM_SHUTDOWN()
+-
+-#      define TM_THREAD_ENTER()         /* nothing */
+-#      define TM_THREAD_EXIT()          /* nothing */
+-#      define thread_barrier_wait();    _Pragma ("omp barrier")
+-
+-#      define P_MALLOC(size)            malloc(size)
+-#      define P_FREE(ptr)               free(ptr)
+-#      define TM_MALLOC(size)           malloc(size)
+-#      define TM_FREE(ptr)              /* TODO: fix memory free problem with OpenTM */
+-
+-#    else /* !OTM */
+-
+-#      define TM_STARTUP(numThread)     STM_STARTUP()
+-#      define TM_SHUTDOWN()             STM_SHUTDOWN()
+-
+-#      define TM_THREAD_ENTER()         TM_ARGDECL_ALONE = STM_NEW_THREAD(); \
+-                                        STM_INIT_THREAD(TM_ARG_ALONE, thread_getId())
+-#      define TM_THREAD_EXIT()          STM_FREE_THREAD(TM_ARG_ALONE)
+-
+-#      define P_MALLOC(size)            malloc(size)
+-#      define P_FREE(ptr)               free(ptr)
+-#      define TM_MALLOC(size)           STM_MALLOC(size)
+-#      define TM_FREE(ptr)              STM_FREE(ptr)
+-
+-#    endif /* !OTM */
+-
+-#  endif /* !SIMULATOR */
+-
+-#  ifdef OTM
+-
+-#    define TM_BEGIN()                  _Pragma ("omp transaction") {
+-#    define TM_BEGIN_RO()               _Pragma ("omp transaction") {
+-#    define TM_END()                    }
+-#    define TM_RESTART()                omp_abort()
+-
+-#    define TM_EARLY_RELEASE(var)       /* nothing */
+-
+-#  else /* !OTM */
+-
+-#    define TM_BEGIN()                  STM_BEGIN_WR()
+-#    define TM_BEGIN_RO()               STM_BEGIN_RD()
+-#    define TM_END()                    STM_END()
+-#    define TM_RESTART()                STM_RESTART()
++#  define TM_ARG                        /* nothing */
++#  define TM_ARG_ALONE                  /* nothing */
++#  define TM_ARGDECL                    /* nothing */
++#  define TM_ARGDECL_ALONE              /* nothing */
++#  define TM_CALLABLE                   /* nothing */
+ 
+-#    define TM_EARLY_RELEASE(var)       /* nothing */
++#  include <mod_stats.h>
+ 
+-#  endif /* !OTM */
++#  define TM_STARTUP(numThread)     if (sizeof(long) != sizeof(void *)) { \
++                                      fprintf(stderr, "Error: unsupported long and pointer sizes\n"); \
++                                      exit(1); \
++                                    } \
++                                    stm_init(); \
++                                    mod_mem_init(0); \
++                                    if (getenv("STM_STATS") != NULL) { \
++                                      mod_stats_init(); \
++                                    }
++#  define TM_SHUTDOWN()             if (getenv("STM_STATS") != NULL) { \
++                                      unsigned long u; \
++                                      if (stm_get_global_stats("global_nb_commits", &u) != 0) \
++                                        printf("#commits    : %lu\n", u); \
++                                      if (stm_get_global_stats("global_nb_aborts", &u) != 0) \
++                                        printf("#aborts     : %lu\n", u); \
++                                      if (stm_get_global_stats("global_max_retries", &u) != 0) \
++                                        printf("Max retries : %lu\n", u); \
++                                    } \
++                                    stm_exit()
++
++#  define TM_THREAD_ENTER()         stm_init_thread()
++#  define TM_THREAD_EXIT()          stm_exit_thread()
++
++#  define TM_START(ro)                do { \
++                                          stm_tx_attr_t _a = {{.read_only = ro}}; \
++                                          sigjmp_buf *_e = stm_start(_a); \
++                                          if (_e != NULL) sigsetjmp(*_e, 0); \
++                                      } while (0)
++#  define TM_BEGIN()                  TM_START(0)
++#  define TM_BEGIN_RO()               TM_START(1)
++#  define TM_END()                    stm_commit()
++#  define TM_RESTART()                stm_abort(0)
+ 
++#  define TM_EARLY_RELEASE(var)       /* nothing */
+ 
+ /* =============================================================================
+  * Sequential execution
+@@ -475,24 +367,6 @@
+ #  define TM_THREAD_ENTER()             /* nothing */
+ #  define TM_THREAD_EXIT()              /* nothing */
+ 
+-#  ifdef SIMULATOR
+-
+-#    include "thread.h"
+-
+-#    define P_MALLOC(size)              memory_get(thread_getId(), size)
+-#    define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
+-#    define TM_MALLOC(size)             memory_get(thread_getId(), size)
+-#    define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
+-
+-#  else /* !SIMULATOR */
+-
+-#    define P_MALLOC(size)              malloc(size)
+-#    define P_FREE(ptr)                 free(ptr)
+-#    define TM_MALLOC(size)             malloc(size)
+-#    define TM_FREE(ptr)                free(ptr)
+-
+-#  endif /* !SIMULATOR */
+-
+ #  define TM_BEGIN()                    /* nothing */
+ #  define TM_BEGIN_RO()                 /* nothing */
+ #  define TM_END()                      /* nothing */
+@@ -515,36 +389,22 @@
+  */
+ #if defined(STM)
+ 
+-#if defined(OTM)
++#  include <wrappers.h>
+ 
+-#  define TM_SHARED_READ(var)           (var)
+-#  define TM_SHARED_READ_P(var)         (var)
+-#  define TM_SHARED_READ_F(var)         (var)
++/* We could also map macros to the stm_(load|store)_long functions if needed */
+ 
+-#  define TM_SHARED_WRITE(var, val)     ({var = val; var;})
+-#  define TM_SHARED_WRITE_P(var, val)   ({var = val; var;})
+-#  define TM_SHARED_WRITE_F(var, val)   ({var = val; var;})
++#  define TM_SHARED_READ(var)           stm_load((volatile stm_word_t *)(void *)&XTM_LOCKABLE_VALUE(var))
++#  define TM_SHARED_READ_P(var)         stm_load_ptr((volatile void **)(void *)&XTM_LOCKABLE_VALUE(var))
++#  define TM_SHARED_READ_F(var)         stm_load_float((volatile float *)(void *)&XTM_LOCKABLE_VALUE(var))
++
++#  define TM_SHARED_WRITE(var, val)     stm_store((volatile stm_word_t *)(void *)&XTM_LOCKABLE_VALUE(var), (stm_word_t)val)
++#  define TM_SHARED_WRITE_P(var, val)   stm_store_ptr((volatile void **)(void *)&XTM_LOCKABLE_VALUE(var), val)
++#  define TM_SHARED_WRITE_F(var, val)   stm_store_float((volatile float *)(void *)&XTM_LOCKABLE_VALUE(var), val)
+ 
+ #  define TM_LOCAL_WRITE(var, val)      ({var = val; var;})
+ #  define TM_LOCAL_WRITE_P(var, val)    ({var = val; var;})
+ #  define TM_LOCAL_WRITE_F(var, val)    ({var = val; var;})
+ 
+-#else /* OTM */
+-
+-#  define TM_SHARED_READ(var)           STM_READ(var)
+-#  define TM_SHARED_READ_P(var)         STM_READ_P(var)
+-#  define TM_SHARED_READ_F(var)         STM_READ_F(var)
+-
+-#  define TM_SHARED_WRITE(var, val)     STM_WRITE((var), val)
+-#  define TM_SHARED_WRITE_P(var, val)   STM_WRITE_P((var), val)
+-#  define TM_SHARED_WRITE_F(var, val)   STM_WRITE_F((var), val)
+-
+-#  define TM_LOCAL_WRITE(var, val)      STM_LOCAL_WRITE(var, val)
+-#  define TM_LOCAL_WRITE_P(var, val)    STM_LOCAL_WRITE_P(var, val)
+-#  define TM_LOCAL_WRITE_F(var, val)    STM_LOCAL_WRITE_F(var, val)
+-
+-#endif /* !OTM */
+-
+ #else /* !STM */
+ 
+ #  define TM_SHARED_READ(var)           (var)
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/tm.h.orig stamp-0.9.10/lib/tm.h.orig
+--- stamp-0.9.10-prepatch/lib/tm.h.orig	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/lib/tm.h.orig	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,573 @@
++/* =============================================================================
++ *
++ * tm.h
++ *
++ * Utility defines for transactional memory
++ *
++ * =============================================================================
++ *
++ * Copyright (C) Stanford University, 2006.  All Rights Reserved.
++ * Authors: Chi Cao Minh and Martin Trautmann
++ *
++ * =============================================================================
++ *
++ * For the license of bayes/sort.h and bayes/sort.c, please see the header
++ * of the files.
++ * 
++ * ------------------------------------------------------------------------
++ * 
++ * For the license of kmeans, please see kmeans/LICENSE.kmeans
++ * 
++ * ------------------------------------------------------------------------
++ * 
++ * For the license of ssca2, please see ssca2/COPYRIGHT
++ * 
++ * ------------------------------------------------------------------------
++ * 
++ * For the license of lib/mt19937ar.c and lib/mt19937ar.h, please see the
++ * header of the files.
++ * 
++ * ------------------------------------------------------------------------
++ * 
++ * For the license of lib/rbtree.h and lib/rbtree.c, please see
++ * lib/LEGALNOTICE.rbtree and lib/LICENSE.rbtree
++ * 
++ * ------------------------------------------------------------------------
++ * 
++ * Unless otherwise noted, the following license applies to STAMP files:
++ * 
++ * Copyright (c) 2007, Stanford University
++ * All rights reserved.
++ * 
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ * 
++ *     * Redistributions of source code must retain the above copyright
++ *       notice, this list of conditions and the following disclaimer.
++ * 
++ *     * Redistributions in binary form must reproduce the above copyright
++ *       notice, this list of conditions and the following disclaimer in
++ *       the documentation and/or other materials provided with the
++ *       distribution.
++ * 
++ *     * Neither the name of Stanford University nor the names of its
++ *       contributors may be used to endorse or promote products derived
++ *       from this software without specific prior written permission.
++ * 
++ * THIS SOFTWARE IS PROVIDED BY STANFORD UNIVERSITY ``AS IS'' AND ANY
++ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL STANFORD UNIVERSITY BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
++ * THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ * =============================================================================
++ */
++
++
++#ifndef TM_H
++#define TM_H 1
++
++#ifdef HAVE_CONFIG_H
++# include "STAMP_config.h"
++#endif
++
++/* =============================================================================
++ * Simulator Specific Interface
++ *
++ * MAIN(argc, argv)
++ *     Declare the main function with argc being the identifier for the argument
++ *     count and argv being the name for the argument string list
++ *
++ * MAIN_RETURN(int_val)
++ *     Returns from MAIN function
++ *
++ * GOTO_SIM()
++ *     Switch simulator to simulation mode
++ *
++ * GOTO_REAL()
++ *     Switch simulator to non-simulation (real) mode
++ *     Note: use in sequential region only
++ *
++ * IS_IN_SIM()
++ *     Returns true if simulator is in simulation mode
++ *
++ * SIM_GET_NUM_CPU(var)
++ *     Assigns the number of simulated CPUs to "var"
++ *
++ * P_MEMORY_STARTUP
++ *     Start up the memory allocator system that handles malloc/free
++ *     in parallel regions (but not in transactions)
++ *
++ * P_MEMORY_SHUTDOWN
++ *     Shutdown the memory allocator system that handles malloc/free
++ *     in parallel regions (but not in transactions)
++ *
++ * =============================================================================
++ */
++#ifdef SIMULATOR
++
++#  include <simapi.h>
++
++#  define MAIN(argc, argv)              void mainX (int argc, \
++                                                    const char** argv, \
++                                                    const char** envp)
++#  define MAIN_RETURN(val)              return /* value is ignored */
++
++#  define GOTO_SIM()                    goto_sim()
++#  define GOTO_REAL()                   goto_real()
++#  define IS_IN_SIM()                   (inSimulation)
++
++#  define SIM_GET_NUM_CPU(var)          ({ \
++                                            if (!IS_IN_SIM()) { \
++                                                GOTO_SIM(); \
++                                                var = Sim_GetNumCpus(); \
++                                                GOTO_REAL(); \
++                                            } else { \
++                                                var = Sim_GetNumCpus(); \
++                                            } \
++                                            var; \
++                                        })
++
++#  define TM_PRINTF                     Sim_Print
++#  define TM_PRINT0                     Sim_Print0
++#  define TM_PRINT1                     Sim_Print1
++#  define TM_PRINT2                     Sim_Print2
++#  define TM_PRINT3                     Sim_Print3
++
++#  include "memory.h"
++#  define P_MEMORY_STARTUP(numThread)   do { \
++                                            bool_t status; \
++                                            status = memory_init((numThread), \
++                                                                 ((1<<28) / numThread), \
++                                                                 2); \
++                                            assert(status); \
++                                        } while (0) /* enforce comma */
++#  define P_MEMORY_SHUTDOWN()           memory_destroy()
++
++#else /* !SIMULATOR */
++
++#  include <stdio.h>
++
++#  define MAIN(argc, argv)              int main (int argc, char** argv)
++#  define MAIN_RETURN(val)              return val
++
++#  define GOTO_SIM()                    /* nothing */
++#  define GOTO_REAL()                   /* nothing */
++#  define IS_IN_SIM()                   (0)
++
++#  define SIM_GET_NUM_CPU(var)          /* nothing */
++
++#  define TM_PRINTF                     printf
++#  define TM_PRINT0                     printf
++#  define TM_PRINT1                     printf
++#  define TM_PRINT2                     printf
++#  define TM_PRINT3                     printf
++
++#  define P_MEMORY_STARTUP(numThread)   /* nothing */
++#  define P_MEMORY_SHUTDOWN()           /* nothing */
++
++#endif /* !SIMULATOR */
++
++
++/* =============================================================================
++ * Transactional Memory System Interface
++ *
++ * TM_ARG
++ * TM_ARG_ALONE
++ * TM_ARGDECL
++ * TM_ARGDECL_ALONE
++ *     Used to pass TM thread meta data to functions (see Examples below)
++ *
++ * TM_STARTUP(numThread)
++ *     Startup the TM system (call before any other TM calls)
++ *
++ * TM_SHUTDOWN()
++ *     Shutdown the TM system
++ *
++ * TM_THREAD_ENTER()
++ *     Call when thread first enters parallel region
++ *
++ * TM_THREAD_EXIT()
++ *     Call when thread exits last parallel region
++ *
++ * P_MALLOC(size)
++ *     Allocate memory inside parallel region
++ *
++ * P_FREE(ptr)
++ *     Deallocate memory inside parallel region
++ *
++ * TM_MALLOC(size)
++ *     Allocate memory inside atomic block / transaction
++ *
++ * TM_FREE(ptr)
++ *     Deallocate memory inside atomic block / transaction
++ *
++ * TM_BEGIN()
++ *     Begin atomic block / transaction
++ *
++ * TM_BEGIN_RO()
++ *     Begin atomic block / transaction that only reads shared data
++ *
++ * TM_END()
++ *     End atomic block / transaction
++ *
++ * TM_RESTART()
++ *     Restart atomic block / transaction
++ *
++ * TM_EARLY_RELEASE()
++ *     Remove speculatively read line from the read set
++ *
++ * =============================================================================
++ *
++ * Example Usage:
++ *
++ *     MAIN(argc,argv)
++ *     {
++ *         TM_STARTUP(8);
++ *         // create 8 threads and go parallel
++ *         TM_SHUTDOWN();
++ *     }
++ *
++ *     void parallel_region ()
++ *     {
++ *         TM_THREAD_ENTER();
++ *         subfunction1(TM_ARG_ALONE);
++ *         subfunction2(TM_ARG  1, 2, 3);
++ *         TM_THREAD_EXIT();
++ *     }
++ *
++ *     void subfunction1 (TM_ARGDECL_ALONE)
++ *     {
++ *         TM_BEGIN_RO()
++ *         // ... do work that only reads shared data ...
++ *         TM_END()
++ *
++ *         long* array = (long*)P_MALLOC(10 * sizeof(long));
++ *         // ... do work ...
++ *         P_FREE(array);
++ *     }
++ *
++ *     void subfunction2 (TM_ARGDECL  long a, long b, long c)
++ *     {
++ *         TM_BEGIN();
++ *         long* array = (long*)TM_MALLOC(a * b * c * sizeof(long));
++ *         // ... do work that may read or write shared data ...
++ *         TM_FREE(array);
++ *         TM_END();
++ *     }
++ *
++ * =============================================================================
++ */
++
++
++/* =============================================================================
++ * HTM - Hardware Transactional Memory
++ * =============================================================================
++ */
++
++#ifdef HTM
++
++#  ifndef SIMULATOR
++#    error HTM requries SIMULATOR
++#  endif
++
++#  include <assert.h>
++#  include <tmapi.h>
++#  include "memory.h"
++#  include "thread.h"
++#  include "types.h"
++
++#  define TM_ARG                        /* nothing */
++#  define TM_ARG_ALONE                  /* nothing */
++#  define TM_ARGDECL                    /* nothing */
++#  define TM_ARGDECL_ALONE              /* nothing */
++#  define TM_CALLABLE                   /* nothing */
++
++#  define TM_STARTUP(numThread)         /* nothing */
++#  define TM_SHUTDOWN()                 /* nothing */
++
++#  define TM_THREAD_ENTER()             /* nothing */
++#  define TM_THREAD_EXIT()              /* nothing */
++
++#  define P_MALLOC(size)                memory_get(thread_getId(), size)
++#  define P_FREE(ptr)                   /* TODO: thread local free is non-trivial */
++#  define TM_MALLOC(size)               memory_get(thread_getId(), size)
++#  define TM_FREE(ptr)                  /* TODO: thread local free is non-trivial */
++
++#  ifdef OTM
++
++#    define thread_getId()              omp_get_thread_num()
++#    define thread_getNumThread()       omp_get_num_threads()
++#    define thread_startup(numThread)   omp_set_num_threads(numThread)
++#    define thread_shutdown()           /* nothing */
++#    define thread_barrier_wait();      _Pragma ("omp barrier")
++#    define TM_BEGIN()                  _Pragma ("omp transaction") {
++#    define TM_BEGIN_RO()               _Pragma ("omp transaction") {
++#    define TM_END()                    }
++#    define TM_RESTART()                _TM_Abort()
++
++#    define TM_EARLY_RELEASE(var)       TM_Release(&(var))
++
++#  else /* !OTM */
++
++#    define TM_BEGIN()                    TM_BeginClosed()
++#    define TM_BEGIN_RO()                 TM_BeginClosed()
++#    define TM_END()                      TM_EndClosed()
++#    define TM_RESTART()                  _TM_Abort()
++#    define TM_EARLY_RELEASE(var)         TM_Release(&(var))
++
++#  endif /* !OTM */
++
++
++/* =============================================================================
++ * STM - Software Transactional Memory
++ * =============================================================================
++ */
++
++#elif defined(STM)
++
++#  include <string.h>
++#  include <stm.h>
++#  include "thread.h"
++
++#  if defined (OTM)
++
++#    define TM_ARG                        /* nothing */
++#    define TM_ARG_ALONE                  /* nothing */
++#    define TM_ARGDECL                    /* nothing */
++#    define TM_ARGDECL_ALONE              /* nothing */
++#    define TM_CALLABLE                   _Pragma ("omp tm_function")
++
++#    define thread_getId()                omp_get_thread_num()
++#    define thread_getNumThread()         omp_get_num_threads()
++#    define thread_startup(numThread)     omp_set_num_threads(numThread)
++#    define thread_shutdown()             /* nothing */
++
++#  else /* !OTM */
++
++#    define TM_ARG                        STM_SELF,
++#    define TM_ARG_ALONE                  STM_SELF
++#    define TM_ARGDECL                    STM_THREAD_T* TM_ARG
++#    define TM_ARGDECL_ALONE              STM_THREAD_T* TM_ARG_ALONE
++#    define TM_CALLABLE                   /* nothing */
++
++#endif /* !OTM */
++
++#  ifdef SIMULATOR
++
++#    ifdef OTM
++
++#      define TM_STARTUP(numThread)       STM_STARTUP(); \
++                                          STM_NEW_THREADS(numThread)
++#      define TM_SHUTDOWN()               STM_SHUTDOWN()
++
++#      define TM_THREAD_ENTER()           omp_set_self()
++#      define TM_THREAD_EXIT()            /* Nothing */
++#      define thread_barrier_wait();      _Pragma ("omp barrier")
++
++#      define P_MALLOC(size)              memory_get(thread_getId(), size)
++#      define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
++#      define TM_MALLOC(size)             memory_get(thread_getId(), size)
++#      define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
++
++#    else /* !OTM */
++
++#      define TM_STARTUP(numThread)       STM_STARTUP(); \
++                                          STM_NEW_THREADS(numThread)
++#      define TM_SHUTDOWN()               STM_SHUTDOWN()
++
++#      define TM_THREAD_ENTER()           TM_ARGDECL_ALONE = \
++                                              STM_GET_THREAD(thread_getId()); \
++                                          STM_SET_SELF(TM_ARG_ALONE)
++
++#      define TM_THREAD_EXIT()            STM_FREE_THREAD(TM_ARG_ALONE)
++
++#      define P_MALLOC(size)              memory_get(thread_getId(), size)
++#      define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
++#      define TM_MALLOC(size)             memory_get(thread_getId(), size)
++#      define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
++
++#    endif /* !OTM */
++
++#  else /* !SIMULATOR */
++
++#    ifdef OTM
++
++#      include <omp.h>
++#      include "tl2.h"
++
++#      define TM_STARTUP(numThread)     STM_STARTUP()
++#      define TM_SHUTDOWN()             STM_SHUTDOWN()
++
++#      define TM_THREAD_ENTER()         /* nothing */
++#      define TM_THREAD_EXIT()          /* nothing */
++#      define thread_barrier_wait();    _Pragma ("omp barrier")
++
++#      define P_MALLOC(size)            malloc(size)
++#      define P_FREE(ptr)               free(ptr)
++#      define TM_MALLOC(size)           malloc(size)
++#      define TM_FREE(ptr)              /* TODO: fix memory free problem with OpenTM */
++
++#    else /* !OTM */
++
++#      define TM_STARTUP(numThread)     STM_STARTUP()
++#      define TM_SHUTDOWN()             STM_SHUTDOWN()
++
++#      define TM_THREAD_ENTER()         TM_ARGDECL_ALONE = STM_NEW_THREAD(); \
++                                        STM_INIT_THREAD(TM_ARG_ALONE, thread_getId())
++#      define TM_THREAD_EXIT()          STM_FREE_THREAD(TM_ARG_ALONE)
++
++#      define P_MALLOC(size)            malloc(size)
++#      define P_FREE(ptr)               free(ptr)
++#      define TM_MALLOC(size)           STM_MALLOC(size)
++#      define TM_FREE(ptr)              STM_FREE(ptr)
++
++#    endif /* !OTM */
++
++#  endif /* !SIMULATOR */
++
++#  ifdef OTM
++
++#    define TM_BEGIN()                  _Pragma ("omp transaction") {
++#    define TM_BEGIN_RO()               _Pragma ("omp transaction") {
++#    define TM_END()                    }
++#    define TM_RESTART()                omp_abort()
++
++#    define TM_EARLY_RELEASE(var)       /* nothing */
++
++#  else /* !OTM */
++
++#    define TM_BEGIN()                  STM_BEGIN_WR()
++#    define TM_BEGIN_RO()               STM_BEGIN_RD()
++#    define TM_END()                    STM_END()
++#    define TM_RESTART()                STM_RESTART()
++
++#    define TM_EARLY_RELEASE(var)       /* nothing */
++
++#  endif /* !OTM */
++
++
++/* =============================================================================
++ * Sequential execution
++ * =============================================================================
++ */
++
++#else /* SEQUENTIAL */
++
++#  include <assert.h>
++
++#  define TM_ARG                        /* nothing */
++#  define TM_ARG_ALONE                  /* nothing */
++#  define TM_ARGDECL                    /* nothing */
++#  define TM_ARGDECL_ALONE              /* nothing */
++#  define TM_CALLABLE                   /* nothing */
++
++#  define TM_STARTUP(numThread)         /* nothing */
++#  define TM_SHUTDOWN()                 /* nothing */
++
++#  define TM_THREAD_ENTER()             /* nothing */
++#  define TM_THREAD_EXIT()              /* nothing */
++
++#  ifdef SIMULATOR
++
++#    include "thread.h"
++
++#    define P_MALLOC(size)              memory_get(thread_getId(), size)
++#    define P_FREE(ptr)                 /* TODO: thread local free is non-trivial */
++#    define TM_MALLOC(size)             memory_get(thread_getId(), size)
++#    define TM_FREE(ptr)                /* TODO: thread local free is non-trivial */
++
++#  else /* !SIMULATOR */
++
++#    define P_MALLOC(size)              malloc(size)
++#    define P_FREE(ptr)                 free(ptr)
++#    define TM_MALLOC(size)             malloc(size)
++#    define TM_FREE(ptr)                free(ptr)
++
++#  endif /* !SIMULATOR */
++
++#  define TM_BEGIN()                    /* nothing */
++#  define TM_BEGIN_RO()                 /* nothing */
++#  define TM_END()                      /* nothing */
++#  define TM_RESTART()                  assert(0)
++
++#  define TM_EARLY_RELEASE(var)         /* nothing */
++
++#endif /* SEQUENTIAL */
++
++
++/* =============================================================================
++ * Transactional Memory System interface for shared memory accesses
++ *
++ * There are 3 flavors of each function:
++ *
++ * 1) no suffix: for accessing variables of size "long"
++ * 2) _P suffix: for accessing variables of type "pointer"
++ * 3) _F suffix: for accessing variables of type "float"
++ * =============================================================================
++ */
++#if defined(STM)
++
++#if defined(OTM)
++
++#  define TM_SHARED_READ(var)           (var)
++#  define TM_SHARED_READ_P(var)         (var)
++#  define TM_SHARED_READ_F(var)         (var)
++
++#  define TM_SHARED_WRITE(var, val)     ({var = val; var;})
++#  define TM_SHARED_WRITE_P(var, val)   ({var = val; var;})
++#  define TM_SHARED_WRITE_F(var, val)   ({var = val; var;})
++
++#  define TM_LOCAL_WRITE(var, val)      ({var = val; var;})
++#  define TM_LOCAL_WRITE_P(var, val)    ({var = val; var;})
++#  define TM_LOCAL_WRITE_F(var, val)    ({var = val; var;})
++
++#else /* OTM */
++
++#  define TM_SHARED_READ(var)           STM_READ(var)
++#  define TM_SHARED_READ_P(var)         STM_READ_P(var)
++#  define TM_SHARED_READ_F(var)         STM_READ_F(var)
++
++#  define TM_SHARED_WRITE(var, val)     STM_WRITE((var), val)
++#  define TM_SHARED_WRITE_P(var, val)   STM_WRITE_P((var), val)
++#  define TM_SHARED_WRITE_F(var, val)   STM_WRITE_F((var), val)
++
++#  define TM_LOCAL_WRITE(var, val)      STM_LOCAL_WRITE(var, val)
++#  define TM_LOCAL_WRITE_P(var, val)    STM_LOCAL_WRITE_P(var, val)
++#  define TM_LOCAL_WRITE_F(var, val)    STM_LOCAL_WRITE_F(var, val)
++
++#endif /* !OTM */
++
++#else /* !STM */
++
++#  define TM_SHARED_READ(var)           (var)
++#  define TM_SHARED_READ_P(var)         (var)
++#  define TM_SHARED_READ_F(var)         (var)
++
++#  define TM_SHARED_WRITE(var, val)     ({var = val; var;})
++#  define TM_SHARED_WRITE_P(var, val)   ({var = val; var;})
++#  define TM_SHARED_WRITE_F(var, val)   ({var = val; var;})
++
++#  define TM_LOCAL_WRITE(var, val)      ({var = val; var;})
++#  define TM_LOCAL_WRITE_P(var, val)    ({var = val; var;})
++#  define TM_LOCAL_WRITE_F(var, val)    ({var = val; var;})
++
++#endif /* !STM */
++
++
++#endif /* TM_H */
++
++
++/* =============================================================================
++ *
++ * End of tm.h
++ *
++ * =============================================================================
++ */
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/lib/utility.h stamp-0.9.10/lib/utility.h
+--- stamp-0.9.10-prepatch/lib/utility.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/lib/utility.h	2017-03-20 14:49:53.000000000 +0000
+@@ -79,28 +79,52 @@
+ #  undef MIN
+ #endif
+ 
++#ifdef __IBMC__
+ 
+ #define MAX(a,b) \
+     ({ \
+-        typeof(a) _a = (a); \
+-        typeof(b) _b = (b); \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
+         (_a > _b) ? (_a) : (_b); \
+     })
+ 
+ #define MIN(a,b) \
+     ({ \
+-        typeof(a) _a = (a); \
+-        typeof(b) _b = (b); \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
+         (_a < _b) ? (_a) : (_b); \
+     })
+ 
+ #define DIVIDE_AND_ROUND_UP(a,b) \
+     ({ \
+-        typeof(a) _a = (a); \
+-        typeof(b) _b = (b); \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
+         (_a / _b) + (((_a % _b) > 0) ? (1) : (0)); \
+     })
+ 
++#else /* ! __IBMC__ */
++
++#define MAX(a,b) \
++    ({ \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
++        (_a > _b) ? (_a) : (_b); \
++    })
++
++#define MIN(a,b) \
++    ({ \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
++        (_a < _b) ? (_a) : (_b); \
++    })
++
++#define DIVIDE_AND_ROUND_UP(a,b) \
++    ({ \
++        __typeof__(a) _a = (a); \
++        __typeof__(b) _b = (b); \
++        (_a / _b) + (((_a % _b) > 0) ? (1) : (0)); \
++    })
++#endif
+ 
+ #endif /* UTILITY_H */
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/CMakeLists.txt stamp-0.9.10/ssca2/CMakeLists.txt
+--- stamp-0.9.10-prepatch/ssca2/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/ssca2/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,34 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++#CFLAGS += -DUSE_PARALLEL_DATA_GENERATION
++#CFLAGS += -DWRITE_RESULT_FILES
++add_definitions(-DENABLE_KERNEL1)
++#CFLAGS += -DENABLE_KERNEL2 -DENABLE_KERNEL3
++#CFLAGS += -DENABLE_KERNEL4
++
++set(sources
++	alg_radix_smp.c 
++	computeGraph.c 
++	createPartition.c 
++        #cutClusters.c 
++        #findSubGraphs.c 
++	genScalData.c 
++        getStartLists.c 
++	getUserParameters.c 
++	globals.c 
++	ssca2.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/thread.c)
++
++app(ssca2 ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/computeGraph.c stamp-0.9.10/ssca2/computeGraph.c
+--- stamp-0.9.10-prepatch/ssca2/computeGraph.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/ssca2/computeGraph.c	2017-03-20 14:49:53.000000000 +0000
+@@ -75,12 +75,19 @@
+ #include "utility.h"
+ #include "tm.h"
+ 
++typedef struct LockableULong {
++    XTM_DECL_LOCKABLE(ULONGINT_T, value1);
++} LockableULong;
++
++typedef struct LockableULongPtr {
++    XTM_DECL_LOCKABLE(LockableULong*, value2);
++} LockableULongPtr;
++
+ static ULONGINT_T*  global_p                 = NULL;
+-static ULONGINT_T   global_maxNumVertices    = 0;
++static XTM_DECL_LOCKABLE(ULONGINT_T,   global_maxNumVertices);//    = 0;
+ static ULONGINT_T   global_outVertexListSize = 0;
+-static ULONGINT_T*  global_impliedEdgeList   = NULL;
+-static ULONGINT_T** global_auxArr            = NULL;
+-
++static LockableULong*  global_impliedEdgeList   = NULL;
++static LockableULongPtr* global_auxArr            = NULL;
+ 
+ /* =============================================================================
+  * prefix_sums
+@@ -144,6 +151,64 @@
+     }
+ }
+ 
++static void
++prefix_sums2 (ULONGINT_T* result, LockableLong* input, ULONGINT_T arraySize)
++{
++    long myId = thread_getId();
++    long numThread = thread_getNumThread();
++
++    ULONGINT_T* p = NULL;
++    if (myId == 0) {
++        p = (ULONGINT_T*)P_MALLOC(NOSHARE(numThread) * sizeof(ULONGINT_T));
++        assert(p);
++        global_p = p;
++    }
++
++    thread_barrier_wait();
++
++    p = global_p;
++
++    long start;
++    long end;
++
++    long r = arraySize / numThread;
++    start = myId * r + 1;
++    end = (myId + 1) * r;
++    if (myId == (numThread - 1)) {
++        end = arraySize;
++    }
++
++    ULONGINT_T j;
++    for (j = start; j < end; j++) {
++        result[j] = XTM_LOCKABLE_VALUE(input[j-1].value) + result[j-1];
++    }
++
++    p[NOSHARE(myId)] = result[end-1];
++
++    thread_barrier_wait();
++
++    if (myId == 0) {
++        for (j = 1; j < numThread; j++) {
++            p[NOSHARE(j)] += p[NOSHARE(j-1)];
++        }
++    }
++
++    thread_barrier_wait();
++
++    if (myId > 0) {
++        ULONGINT_T add_value = p[NOSHARE(myId-1)];
++        for (j = start-1; j < end; j++) {
++            result[j] += add_value;
++        }
++    }
++
++    thread_barrier_wait();
++
++    if (myId == 0) {
++        P_FREE(p);
++    }
++}
++
+ 
+ /* =============================================================================
+  * computeGraph
+@@ -188,7 +253,7 @@
+ 
+     thread_barrier_wait();
+ 
+-    maxNumVertices = global_maxNumVertices;
++    maxNumVertices = XTM_LOCKABLE_VALUE(global_maxNumVertices);
+ 
+     if (myId == 0) {
+ 
+@@ -294,14 +359,19 @@
+ 
+     prefix_sums(GPtr->outVertexIndex, GPtr->outDegree, GPtr->numVertices);
+ 
++    // XXX For some reason, TinySTM does not generate the correct code
++    // for the summation below, just implement with atomic increment
++    __sync_fetch_and_add(&global_outVertexListSize, outVertexListSize);
++
+     thread_barrier_wait();
+ 
+-    TM_BEGIN();
+-    TM_SHARED_WRITE(
+-        global_outVertexListSize,
+-        ((long)TM_SHARED_READ(global_outVertexListSize) + outVertexListSize)
+-    );
+-    TM_END();
++    // XXX race
++    //TM_BEGIN();
++    //TM_SHARED_WRITE(
++    //    global_outVertexListSize,
++    //    ((long)TM_SHARED_READ(global_outVertexListSize) + outVertexListSize)
++    //);
++    //TM_END();
+ 
+     thread_barrier_wait();
+ 
+@@ -399,7 +469,7 @@
+         P_FREE(SDGdataPtr->startVertex);
+         P_FREE(SDGdataPtr->endVertex);
+         GPtr->inDegree =
+-            (LONGINT_T*)P_MALLOC(GPtr->numVertices * sizeof(LONGINT_T));
++            (LockableLong*)P_MALLOC(GPtr->numVertices * sizeof(LockableLong));
+         assert(GPtr->inDegree);
+         GPtr->inVertexIndex =
+             (ULONGINT_T*)P_MALLOC(GPtr->numVertices * sizeof(ULONGINT_T));
+@@ -409,16 +479,17 @@
+     thread_barrier_wait();
+ 
+     for (i = i_start; i < i_stop; i++) {
+-        GPtr->inDegree[i] = 0;
++        XTM_LOCKABLE_VALUE(GPtr->inDegree[i].value) = 0;
++        XTM_LOCKABLE_INIT(GPtr->inDegree[i].value);
+         GPtr->inVertexIndex[i] = 0;
+     }
+ 
+     /* A temp. array to store the inplied edges */
+-    ULONGINT_T* impliedEdgeList;
++    LockableULong* impliedEdgeList;
+     if (myId == 0) {
+-        impliedEdgeList = (ULONGINT_T*)P_MALLOC(GPtr->numVertices
++        impliedEdgeList = (LockableULong*)P_MALLOC(GPtr->numVertices
+                                                 * MAX_CLUSTER_SIZE
+-                                                * sizeof(ULONGINT_T));
++                                                * sizeof(LockableULong));
+         global_impliedEdgeList = impliedEdgeList;
+     }
+ 
+@@ -434,7 +505,8 @@
+                     &i_stop);
+ 
+     for (i = i_start; i < i_stop; i++) {
+-        impliedEdgeList[i] = 0;
++        XTM_LOCKABLE_VALUE(impliedEdgeList[i].value1) = 0;
++        XTM_LOCKABLE_INIT(impliedEdgeList[i].value1);
+     }
+ 
+     /*
+@@ -442,11 +514,14 @@
+      * MAX_CLUSTER_SIZE
+      */
+ 
+-    ULONGINT_T** auxArr;
++    LockableULongPtr* auxArr;
+     if (myId == 0) {
+-        auxArr = (ULONGINT_T**)P_MALLOC(GPtr->numVertices * sizeof(ULONGINT_T*));
++        auxArr = (LockableULongPtr*)P_MALLOC(GPtr->numVertices * sizeof(*auxArr));
+         assert(auxArr);
+         global_auxArr = auxArr;
++        for (i = 0; i < GPtr->numVertices; ++i) {
++            XTM_LOCKABLE_INIT(auxArr[i].value2);
++        }
+     }
+ 
+     thread_barrier_wait();
+@@ -474,24 +549,24 @@
+             if (k == GPtr->outVertexIndex[v]+GPtr->outDegree[v]) {
+                 TM_BEGIN();
+                 /* Add i to the impliedEdgeList of v */
+-                long inDegree = (long)TM_SHARED_READ(GPtr->inDegree[v]);
+-                TM_SHARED_WRITE(GPtr->inDegree[v], (inDegree + 1));
++                long inDegree = (long)TM_SHARED_READ(GPtr->inDegree[v].value);
++                TM_SHARED_WRITE(GPtr->inDegree[v].value, (inDegree + 1));
+                 if (inDegree < MAX_CLUSTER_SIZE) {
+-                    TM_SHARED_WRITE(impliedEdgeList[v*MAX_CLUSTER_SIZE+inDegree],
++                    TM_SHARED_WRITE(impliedEdgeList[v*MAX_CLUSTER_SIZE+inDegree].value1,
+                                     i);
+                 } else {
+                     /* Use auxiliary array to store the implied edge */
+                     /* Create an array if it's not present already */
+-                    ULONGINT_T* a = NULL;
++                    LockableULong* a = NULL;
+                     if ((inDegree % MAX_CLUSTER_SIZE) == 0) {
+-                        a = (ULONGINT_T*)TM_MALLOC(MAX_CLUSTER_SIZE
+-                                                   * sizeof(ULONGINT_T));
++                        a = (LockableULong*)TM_MALLOC(MAX_CLUSTER_SIZE
++                                                   * sizeof(*a));
+                         assert(a);
+-                        TM_SHARED_WRITE_P(auxArr[v], a);
++                        TM_SHARED_WRITE_P(auxArr[v].value2, a);
+                     } else {
+-                        a = auxArr[v];
++                        a = XTM_LOCKABLE_VALUE(auxArr[v].value2);
+                     }
+-                    TM_SHARED_WRITE(a[inDegree % MAX_CLUSTER_SIZE], i);
++                    TM_SHARED_WRITE(a[inDegree % MAX_CLUSTER_SIZE].value1, i);
+                 }
+                 TM_END();
+             }
+@@ -500,11 +575,11 @@
+ 
+     thread_barrier_wait();
+ 
+-    prefix_sums(GPtr->inVertexIndex, GPtr->inDegree, GPtr->numVertices);
++    prefix_sums2(GPtr->inVertexIndex, GPtr->inDegree, GPtr->numVertices);
+ 
+     if (myId == 0) {
+         GPtr->numUndirectedEdges = GPtr->inVertexIndex[GPtr->numVertices-1]
+-                                   + GPtr->inDegree[GPtr->numVertices-1];
++                                   + XTM_LOCKABLE_VALUE(GPtr->inDegree[GPtr->numVertices-1].value);
+         GPtr->inVertexList =
+             (ULONGINT_T *)P_MALLOC(GPtr->numUndirectedEdges * sizeof(ULONGINT_T));
+     }
+@@ -517,15 +592,15 @@
+ 
+     for (i = i_start; i < i_stop; i++) {
+         for (j = GPtr->inVertexIndex[i];
+-             j < (GPtr->inVertexIndex[i] + GPtr->inDegree[i]);
++             j < (GPtr->inVertexIndex[i] + XTM_LOCKABLE_VALUE(GPtr->inDegree[i].value));
+              j++)
+         {
+             if ((j - GPtr->inVertexIndex[i]) < MAX_CLUSTER_SIZE) {
+                 GPtr->inVertexList[j] =
+-                    impliedEdgeList[i*MAX_CLUSTER_SIZE+j-GPtr->inVertexIndex[i]];
++                    XTM_LOCKABLE_VALUE(impliedEdgeList[i*MAX_CLUSTER_SIZE+j-GPtr->inVertexIndex[i]].value1);
+             } else {
+                 GPtr->inVertexList[j] =
+-                    auxArr[i][(j-GPtr->inVertexIndex[i]) % MAX_CLUSTER_SIZE];
++                    XTM_LOCKABLE_VALUE(XTM_LOCKABLE_VALUE(auxArr[i].value2)[(j-GPtr->inVertexIndex[i]) % MAX_CLUSTER_SIZE].value1);
+             }
+         }
+     }
+@@ -537,8 +612,8 @@
+     }
+ 
+     for (i = i_start; i < i_stop; i++) {
+-        if (GPtr->inDegree[i] > MAX_CLUSTER_SIZE) {
+-            P_FREE(auxArr[i]);
++        if (XTM_LOCKABLE_VALUE(GPtr->inDegree[i].value) > MAX_CLUSTER_SIZE) {
++            TM_FREE(XTM_LOCKABLE_VALUE(auxArr[i].value2));
+         }
+     }
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/defs.h stamp-0.9.10/ssca2/defs.h
+--- stamp-0.9.10-prepatch/ssca2/defs.h	2017-03-21 21:36:45.000000000 +0000
++++ stamp-0.9.10/ssca2/defs.h	2017-03-20 14:49:53.000000000 +0000
+@@ -67,6 +67,8 @@
+ #ifndef DEFS_H
+ #define DEFS_H 1
+ 
++#include "tm.h"
++
+ typedef unsigned long int  ULONGINT_T;
+ typedef long int           LONGINT_T;
+ typedef short int          SHORTINT_T;
+@@ -92,6 +94,10 @@
+ 
+ } graphSDG;
+ 
++typedef struct LockableLong {
++    XTM_DECL_LOCKABLE(LONGINT_T, value);
++} LockableLong;
++
+ typedef struct /*the graph data structure*/
+ {
+     ULONGINT_T numVertices;
+@@ -108,7 +114,7 @@
+     ULONGINT_T* outVertexList;
+     ULONGINT_T* paralEdgeIndex;
+ 
+-    LONGINT_T*  inDegree;
++    LockableLong*  inDegree;
+     ULONGINT_T* inVertexIndex;
+     ULONGINT_T* inVertexList;
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/genScalData.c stamp-0.9.10/ssca2/genScalData.c
+--- stamp-0.9.10-prepatch/ssca2/genScalData.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/ssca2/genScalData.c	2017-03-20 14:49:53.000000000 +0000
+@@ -762,6 +762,7 @@
+  * genScalData
+  * =============================================================================
+  */
++#if 0
+ void
+ genScalData (void* argPtr)
+ {
+@@ -1644,6 +1645,7 @@
+ 
+     TM_THREAD_EXIT();
+ }
++#endif
+ 
+ 
+ /* =============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/getStartLists.c stamp-0.9.10/ssca2/getStartLists.c
+--- stamp-0.9.10-prepatch/ssca2/getStartLists.c	2017-03-21 21:36:45.000000000 +0000
++++ stamp-0.9.10/ssca2/getStartLists.c	2017-03-20 14:49:53.000000000 +0000
+@@ -77,7 +77,7 @@
+ #include "tm.h"
+ #include "utility.h"
+ 
+-static LONGINT_T global_maxWeight          = 0;
++static XTM_DECL_LOCKABLE(LONGINT_T, global_maxWeight); //          = 0;
+ static long*     global_i_edgeStartCounter = NULL;
+ static long*     global_i_edgeEndCounter   = NULL;
+ static edge*     global_maxIntWtList       = NULL;
+@@ -128,7 +128,7 @@
+ 
+     thread_barrier_wait();
+ 
+-    maxWeight = global_maxWeight;
++    maxWeight = XTM_LOCKABLE_VALUE(global_maxWeight);
+ 
+     /*
+      * Create partial lists
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/ssca2/ssca2.c stamp-0.9.10/ssca2/ssca2.c
+--- stamp-0.9.10-prepatch/ssca2/ssca2.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/ssca2/ssca2.c	2017-03-20 14:49:53.000000000 +0000
+@@ -215,6 +215,7 @@
+     TIMER_READ(start);
+ 
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -223,6 +224,7 @@
+ #else
+     thread_start(computeGraph, (void*)&computeGraphArgs);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+ 
+     TIMER_READ(stop);
+@@ -232,6 +234,7 @@
+ 
+     printf("\n\tcomputeGraph() completed execution.\n");
+     printf("\nTime taken for kernel 1 is %9.6f sec.\n", time);
++    printf("\nSTAMP time = %9.6f\n", time);
+ 
+ #endif /* ENABLE_KERNEL1 */
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/CMakeLists.txt stamp-0.9.10/vacation/CMakeLists.txt
+--- stamp-0.9.10-prepatch/vacation/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/vacation/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,28 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DLIST_NO_DUPLICATES -DMAP_USE_RBTREE)
++
++set(sources
++	client.c 
++	customer.c 
++	manager.c 
++	reservation.c 
++	vacation.c 
++	${LIB_DIR}/list.c 
++	${LIB_DIR}/pair.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/rbtree.c 
++	${LIB_DIR}/thread.c)
++
++app(vacation ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/customer.c stamp-0.9.10/vacation/customer.c
+--- stamp-0.9.10-prepatch/vacation/customer.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/customer.c	2017-03-20 14:49:53.000000000 +0000
+@@ -106,8 +106,9 @@
+ 
+     customerPtr->id = id;
+ 
+-    customerPtr->reservationInfoListPtr = TMLIST_ALLOC(&compareReservationInfo);
+-    assert(customerPtr->reservationInfoListPtr != NULL);
++    XTM_LOCKABLE_VALUE(customerPtr->reservationInfoListPtr) = TMLIST_ALLOC(&compareReservationInfo);
++    XTM_LOCKABLE_INIT(customerPtr->reservationInfoListPtr);
++    assert(XTM_LOCKABLE_VALUE(customerPtr->reservationInfoListPtr) != NULL);
+ 
+     return customerPtr;
+ }
+@@ -123,8 +124,9 @@
+ 
+     customerPtr->id = id;
+ 
+-    customerPtr->reservationInfoListPtr = list_alloc(&compareReservationInfo);
+-    assert(customerPtr->reservationInfoListPtr != NULL);
++    XTM_LOCKABLE_VALUE(customerPtr->reservationInfoListPtr) = list_alloc(&compareReservationInfo);
++    XTM_LOCKABLE_INIT(customerPtr->reservationInfoListPtr);
++    assert(XTM_LOCKABLE_VALUE(customerPtr->reservationInfoListPtr) != NULL);
+ 
+     return customerPtr;
+ }
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/customer.h stamp-0.9.10/vacation/customer.h
+--- stamp-0.9.10-prepatch/vacation/customer.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/customer.h	2017-03-20 14:49:53.000000000 +0000
+@@ -81,7 +81,7 @@
+ 
+ typedef struct customer {
+     long id;
+-    list_t* reservationInfoListPtr;
++    XTM_DECL_LOCKABLE(list_t*, reservationInfoListPtr);
+ } customer_t;
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/manager.c stamp-0.9.10/vacation/manager.c
+--- stamp-0.9.10-prepatch/vacation/manager.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/manager.c	2017-03-20 14:49:53.000000000 +0000
+@@ -234,7 +234,7 @@
+         if (!reservation_addToTotal_seq(reservationPtr, num)) {
+             return FALSE;
+         }
+-        if (reservationPtr->numTotal == 0) {
++        if (XTM_LOCKABLE_VALUE(reservationPtr->numTotal) == 0) {
+             status = MAP_REMOVE(tablePtr, id);
+             assert(status);
+         } else {
+@@ -449,7 +449,7 @@
+     reservationTables[RESERVATION_FLIGHT] = managerPtr->flightTablePtr;
+ 
+     /* Cancel this customer's reservations */
+-    reservationInfoListPtr = customerPtr->reservationInfoListPtr;
++    reservationInfoListPtr = XTM_LOCKABLE_VALUE(customerPtr->reservationInfoListPtr);
+     TMLIST_ITER_RESET(&it, reservationInfoListPtr);
+     while (TMLIST_ITER_HASNEXT(&it, reservationInfoListPtr)) {
+         reservation_info_t* reservationInfoPtr;
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/reservation.c stamp-0.9.10/vacation/reservation.c
+--- stamp-0.9.10-prepatch/vacation/reservation.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/reservation.c	2017-03-20 14:49:53.000000000 +0000
+@@ -174,12 +174,12 @@
+ static void
+ checkReservation_seq (reservation_t* reservationPtr)
+ {
+-    assert(reservationPtr->numUsed >= 0);
+-    assert(reservationPtr->numFree >= 0);
+-    assert(reservationPtr->numTotal >= 0);
+-    assert((reservationPtr->numUsed + reservationPtr->numFree) ==
+-           (reservationPtr->numTotal));
+-    assert(reservationPtr->price >= 0);
++    assert(XTM_LOCKABLE_VALUE(reservationPtr->numUsed) >= 0);
++    assert(XTM_LOCKABLE_VALUE(reservationPtr->numFree) >= 0);
++    assert(XTM_LOCKABLE_VALUE(reservationPtr->numTotal) >= 0);
++    assert((XTM_LOCKABLE_VALUE(reservationPtr->numUsed) + XTM_LOCKABLE_VALUE(reservationPtr->numFree)) ==
++           XTM_LOCKABLE_VALUE(reservationPtr->numTotal));
++    assert(XTM_LOCKABLE_VALUE(reservationPtr->price) >= 0);
+ }
+ 
+ 
+@@ -196,10 +196,14 @@
+     reservationPtr = (reservation_t*)TM_MALLOC(sizeof(reservation_t));
+     if (reservationPtr != NULL) {
+         reservationPtr->id = id;
+-        reservationPtr->numUsed = 0;
+-        reservationPtr->numFree = numTotal;
+-        reservationPtr->numTotal = numTotal;
+-        reservationPtr->price = price;
++        XTM_LOCKABLE_VALUE(reservationPtr->numUsed) = 0;
++        XTM_LOCKABLE_INIT(reservationPtr->numUsed);
++        XTM_LOCKABLE_VALUE(reservationPtr->numFree) = numTotal;
++        XTM_LOCKABLE_INIT(reservationPtr->numFree);
++        XTM_LOCKABLE_VALUE(reservationPtr->numTotal) = numTotal;
++        XTM_LOCKABLE_INIT(reservationPtr->numTotal);
++        XTM_LOCKABLE_VALUE(reservationPtr->price) = price;
++        XTM_LOCKABLE_INIT(reservationPtr->price);
+         CHECK_RESERVATION(reservationPtr);
+     }
+ 
+@@ -215,10 +219,14 @@
+     reservationPtr = (reservation_t*)malloc(sizeof(reservation_t));
+     if (reservationPtr != NULL) {
+         reservationPtr->id = id;
+-        reservationPtr->numUsed = 0;
+-        reservationPtr->numFree = numTotal;
+-        reservationPtr->numTotal = numTotal;
+-        reservationPtr->price = price;
++        XTM_LOCKABLE_VALUE(reservationPtr->numUsed) = 0;
++        XTM_LOCKABLE_INIT(reservationPtr->numUsed);
++        XTM_LOCKABLE_VALUE(reservationPtr->numFree) = numTotal;
++        XTM_LOCKABLE_INIT(reservationPtr->numFree);
++        XTM_LOCKABLE_VALUE(reservationPtr->numTotal) = numTotal;
++        XTM_LOCKABLE_INIT(reservationPtr->numTotal);
++        XTM_LOCKABLE_VALUE(reservationPtr->price) = price;
++        XTM_LOCKABLE_INIT(reservationPtr->price);
+         checkReservation_seq(reservationPtr);
+     }
+ 
+@@ -254,12 +262,12 @@
+ bool_t
+ reservation_addToTotal_seq (reservation_t* reservationPtr, long num)
+ {
+-    if (reservationPtr->numFree + num < 0) {
++    if (XTM_LOCKABLE_VALUE(reservationPtr->numFree) + num < 0) {
+         return FALSE;
+     }
+ 
+-    reservationPtr->numFree += num;
+-    reservationPtr->numTotal += num;
++    XTM_LOCKABLE_VALUE(reservationPtr->numFree) += num;
++    XTM_LOCKABLE_VALUE(reservationPtr->numTotal) += num;
+ 
+     checkReservation_seq(reservationPtr);
+ 
+@@ -293,12 +301,12 @@
+ bool_t
+ reservation_make_seq (reservation_t* reservationPtr)
+ {
+-    if (reservationPtr->numFree < 1) {
++    if (XTM_LOCKABLE_VALUE(reservationPtr->numFree) < 1) {
+         return FALSE;
+     }
+ 
+-    reservationPtr->numUsed++;
+-    reservationPtr->numFree--;
++    XTM_LOCKABLE_VALUE(reservationPtr->numUsed)++;
++    XTM_LOCKABLE_VALUE(reservationPtr->numFree)--;
+ 
+     checkReservation_seq(reservationPtr);
+ 
+@@ -333,12 +341,12 @@
+ bool_t
+ reservation_cancel_seq (reservation_t* reservationPtr)
+ {
+-    if (reservationPtr->numUsed < 1) {
++    if (XTM_LOCKABLE_VALUE(reservationPtr->numUsed) < 1) {
+         return FALSE;
+     }
+ 
+-    reservationPtr->numUsed--;
+-    reservationPtr->numFree++;
++    XTM_LOCKABLE_VALUE(reservationPtr->numUsed)--;
++    XTM_LOCKABLE_VALUE(reservationPtr->numFree)++;
+ 
+     checkReservation_seq(reservationPtr);
+ 
+@@ -374,7 +382,7 @@
+         return FALSE;
+     }
+ 
+-    reservationPtr->price = newPrice;
++    XTM_LOCKABLE_VALUE(reservationPtr->price) = newPrice;
+ 
+     checkReservation_seq(reservationPtr);
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/reservation.h stamp-0.9.10/vacation/reservation.h
+--- stamp-0.9.10-prepatch/vacation/reservation.h	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/reservation.h	2017-03-20 14:49:53.000000000 +0000
+@@ -92,10 +92,10 @@
+ 
+ typedef struct reservation {
+     long id;
+-    long numUsed;
+-    long numFree;
+-    long numTotal;
+-    long price;
++    XTM_DECL_LOCKABLE(long, numUsed);
++    XTM_DECL_LOCKABLE(long, numFree);
++    XTM_DECL_LOCKABLE(long, numTotal);
++    XTM_DECL_LOCKABLE(long, price);
+ } reservation_t;
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/vacation/vacation.c stamp-0.9.10/vacation/vacation.c
+--- stamp-0.9.10-prepatch/vacation/vacation.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/vacation/vacation.c	2017-03-20 14:49:53.000000000 +0000
+@@ -433,6 +433,7 @@
+     fflush(stdout);
+     TIMER_READ(start);
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -441,11 +442,14 @@
+ #else
+     thread_start(client_run, (void*)clients);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_READ(stop);
+     puts("done.");
+     printf("Time = %0.6lf\n",
+            TIMER_DIFF_SECONDS(start, stop));
++    printf("STAMP time = %0.6lf\n",
++           TIMER_DIFF_SECONDS(start, stop));
+     fflush(stdout);
+     checkTables(managerPtr);
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/CMakeLists.txt stamp-0.9.10/yada/CMakeLists.txt
+--- stamp-0.9.10-prepatch/yada/CMakeLists.txt	1970-01-01 01:00:00.000000000 +0100
++++ stamp-0.9.10/yada/CMakeLists.txt	2017-03-20 14:49:53.000000000 +0000
+@@ -0,0 +1,32 @@
++# ==============================================================================
++#
++# Defines.common.mk
++#
++# ==============================================================================
++
++add_definitions(-DLIST_NO_DUPLICATES -DMAP_USE_AVLTREE -DSET_USE_RBTREE)
++
++set(sources
++	coordinate.c 
++	element.c 
++	mesh.c 
++	region.c 
++	yada.c 
++	${LIB_DIR}/avltree.c 
++	${LIB_DIR}/heap.c 
++	${LIB_DIR}/list.c 
++	${LIB_DIR}/mt19937ar.c 
++	${LIB_DIR}/pair.c 
++	${LIB_DIR}/queue.c 
++	${LIB_DIR}/random.c 
++	${LIB_DIR}/rbtree.c 
++	${LIB_DIR}/thread.c 
++	${LIB_DIR}/vector.c)
++
++app(yada ${sources})
++
++# ==============================================================================
++#
++# End of Defines.common.mk
++#
++# ==============================================================================
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/coordinate.c stamp-0.9.10/yada/coordinate.c
+--- stamp-0.9.10-prepatch/yada/coordinate.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/yada/coordinate.c	2017-03-20 14:49:53.000000000 +0000
+@@ -73,6 +73,9 @@
+ #include <stdio.h>
+ #include "coordinate.h"
+ 
++#ifndef M_PI
++#    define M_PI 3.14159265358979323846
++#endif
+ 
+ /* =============================================================================
+  * coordinate_compare
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/element.c stamp-0.9.10/yada/element.c
+--- stamp-0.9.10-prepatch/yada/element.c	2017-03-21 21:40:03.000000000 +0000
++++ stamp-0.9.10/yada/element.c	2017-03-21 18:51:27.000000000 +0000
+@@ -94,8 +94,8 @@
+     edge_t* encroachedEdgePtr; /* opposite obtuse angle */
+     bool_t isSkinny;
+     list_t* neighborListPtr;
+-    bool_t isGarbage;
+-    bool_t isReferenced;
++    XTM_DECL_LOCKABLE(bool_t, isGarbage);
++    XTM_DECL_LOCKABLE(bool_t, isReferenced);
+ };
+ 
+ 
+@@ -150,7 +150,7 @@
+     double minAngle = 180.0;
+ 
+     assert(numCoordinate == 2 || numCoordinate == 3);
+-    elementPtr->isReferenced = FALSE;
++    XTM_LOCKABLE_VALUE(elementPtr->isReferenced) = FALSE;
+     elementPtr->isSkinny = FALSE;
+     elementPtr->encroachedEdgePtr = NULL;
+ 
+@@ -391,8 +391,10 @@
+         initEdges(elementPtr, coordinates, numCoordinate);
+         elementPtr->neighborListPtr = list_alloc(element_listCompare);
+         assert(elementPtr->neighborListPtr);
+-        elementPtr->isGarbage = FALSE;
+-        elementPtr->isReferenced = FALSE;
++        XTM_LOCKABLE_VALUE(elementPtr->isGarbage) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isGarbage);
++        XTM_LOCKABLE_VALUE(elementPtr->isReferenced) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isReferenced);
+     }
+ 
+     return elementPtr;
+@@ -423,8 +425,10 @@
+         initEdges(elementPtr, coordinates, numCoordinate);
+         elementPtr->neighborListPtr = PLIST_ALLOC(element_listCompare);
+         assert(elementPtr->neighborListPtr);
+-        elementPtr->isGarbage = FALSE;
+-        elementPtr->isReferenced = FALSE;
++        XTM_LOCKABLE_VALUE(elementPtr->isGarbage) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isGarbage);
++        XTM_LOCKABLE_VALUE(elementPtr->isReferenced) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isReferenced);
+     }
+ 
+     return elementPtr;
+@@ -455,8 +459,10 @@
+         initEdges(elementPtr, coordinates, numCoordinate);
+         elementPtr->neighborListPtr = TMLIST_ALLOC(element_listCompare);
+         assert(elementPtr->neighborListPtr);
+-        elementPtr->isGarbage = FALSE;
+-        elementPtr->isReferenced = FALSE;
++        XTM_LOCKABLE_VALUE(elementPtr->isGarbage) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isGarbage);
++        XTM_LOCKABLE_VALUE(elementPtr->isReferenced) = FALSE;
++        XTM_LOCKABLE_INIT(elementPtr->isReferenced);
+     }
+ 
+     return elementPtr;
+@@ -683,7 +689,7 @@
+ bool_t
+ element_isReferenced (element_t* elementPtr)
+ {
+-    return elementPtr->isReferenced;
++    return XTM_LOCKABLE_VALUE(elementPtr->isReferenced);
+ }
+ 
+ 
+@@ -706,7 +712,7 @@
+ void
+ element_setIsReferenced (element_t* elementPtr, bool_t status)
+ {
+-    elementPtr->isReferenced = status;
++    XTM_LOCKABLE_VALUE(elementPtr->isReferenced) = status;
+ }
+ 
+ 
+@@ -729,7 +735,7 @@
+ bool_t
+ element_isGarbage (element_t* elementPtr)
+ {
+-    return elementPtr->isGarbage;
++    return XTM_LOCKABLE_VALUE(elementPtr->isGarbage);
+ }
+ 
+ 
+@@ -752,7 +758,7 @@
+ void
+ element_setIsGarbage (element_t* elementPtr, bool_t status)
+ {
+-    elementPtr->isGarbage = status;
++    XTM_LOCKABLE_VALUE(elementPtr->isGarbage) = status;
+ }
+ 
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/mesh.c stamp-0.9.10/yada/mesh.c
+--- stamp-0.9.10-prepatch/yada/mesh.c	2017-03-21 21:40:04.000000000 +0000
++++ stamp-0.9.10/yada/mesh.c	2017-03-20 14:49:53.000000000 +0000
+@@ -86,7 +86,7 @@
+ 
+ 
+ struct mesh {
+-    element_t* rootElementPtr;
++    XTM_DECL_LOCKABLE(element_t*, rootElementPtr);
+     queue_t* initBadQueuePtr;
+     long size;
+     SET_T* boundarySetPtr;
+@@ -103,7 +103,8 @@
+     mesh_t* meshPtr = (mesh_t*)malloc(sizeof(mesh_t));
+ 
+     if (meshPtr) {
+-        meshPtr->rootElementPtr = NULL;
++        XTM_LOCKABLE_VALUE(meshPtr->rootElementPtr) = NULL;
++        XTM_LOCKABLE_INIT(meshPtr->rootElementPtr);
+         meshPtr->initBadQueuePtr = queue_alloc(-1);
+         assert(meshPtr->initBadQueuePtr);
+         meshPtr->size = 0;
+@@ -140,8 +141,8 @@
+      * The root element is not needed for the actual refining, but rather
+      * for checking the validity of the final mesh.
+      */
+-    if (!meshPtr->rootElementPtr) {
+-        meshPtr->rootElementPtr = elementPtr;
++    if (!XTM_LOCKABLE_VALUE(meshPtr->rootElementPtr)) {
++        XTM_LOCKABLE_VALUE(meshPtr->rootElementPtr) = elementPtr;
+     }
+ 
+     /*
+@@ -517,8 +518,8 @@
+     /*
+      * Do breadth-first search starting from rootElementPtr
+      */
+-    assert(meshPtr->rootElementPtr);
+-    queue_push(searchQueuePtr, (void*)meshPtr->rootElementPtr);
++    assert(XTM_LOCKABLE_VALUE(meshPtr->rootElementPtr));
++    queue_push(searchQueuePtr, (void*)XTM_LOCKABLE_VALUE(meshPtr->rootElementPtr));
+     while (!queue_isEmpty(searchQueuePtr)) {
+ 
+         element_t* currentElementPtr;
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/region.c stamp-0.9.10/yada/region.c
+--- stamp-0.9.10-prepatch/yada/region.c	2017-03-21 21:40:04.000000000 +0000
++++ stamp-0.9.10/yada/region.c	2017-03-20 14:49:53.000000000 +0000
+@@ -234,6 +234,8 @@
+ 
+     numDelta += PLIST_GETSIZE(borderListPtr);
+ 
++    assert(numDelta > 0);
++
+     return numDelta;
+ }
+ 
+@@ -274,6 +276,7 @@
+ 
+         PLIST_INSERT(beforeListPtr, (void*)currentElementPtr); /* no duplicates */
+         list_t* neighborListPtr = element_getNeighborListPtr(currentElementPtr);
++        assert(TMLIST_GETSIZE(neighborListPtr) > 0);
+ 
+         list_iter_t it;
+         TMLIST_ITER_RESET(&it, neighborListPtr);
+@@ -370,6 +373,8 @@
+ 
+     PMAP_FREE(edgeMapPtr); /* no need to free elements */
+ 
++    //assert(numDelta > 0);
++
+     return numDelta;
+ }
+ 
+diff -x .git -x inputs -Naur stamp-0.9.10-prepatch/yada/yada.c stamp-0.9.10/yada/yada.c
+--- stamp-0.9.10-prepatch/yada/yada.c	2017-03-21 21:40:04.000000000 +0000
++++ stamp-0.9.10/yada/yada.c	2017-03-20 14:49:53.000000000 +0000
+@@ -92,8 +92,8 @@
+ double   global_angleConstraint = PARAM_DEFAULT_ANGLE;
+ mesh_t*  global_meshPtr;
+ heap_t*  global_workHeapPtr;
+-long     global_totalNumAdded = 0;
+-long     global_numProcess    = 0;
++XTM_DECL_LOCKABLE(long,     global_totalNumAdded); // = 0;
++XTM_DECL_LOCKABLE(long,     global_numProcess);//    = 0;
+ 
+ 
+ /* =============================================================================
+@@ -303,6 +303,7 @@
+     TIMER_T start;
+     TIMER_READ(start);
+     GOTO_SIM();
++    thread_begin_timing();
+ #ifdef OTM
+ #pragma omp parallel
+     {
+@@ -311,6 +312,7 @@
+ #else
+     thread_start(process, NULL);
+ #endif
++    thread_end_timing();
+     GOTO_REAL();
+     TIMER_T stop;
+     TIMER_READ(stop);
+@@ -318,15 +320,17 @@
+     puts(" done.");
+     printf("Elapsed time                    = %0.3lf\n",
+            TIMER_DIFF_SECONDS(start, stop));
++    printf("STAMP time = %0.3lf\n",
++           TIMER_DIFF_SECONDS(start, stop));
+     fflush(stdout);
+ 
+     /*
+      * Check solution
+      */
+ 
+-    long finalNumElement = initNumElement + global_totalNumAdded;
++    long finalNumElement = initNumElement + XTM_LOCKABLE_VALUE(global_totalNumAdded);
+     printf("Final mesh size                 = %li\n", finalNumElement);
+-    printf("Number of elements processed    = %li\n", global_numProcess);
++    printf("Number of elements processed    = %li\n", XTM_LOCKABLE_VALUE(global_numProcess));
+     fflush(stdout);
+ 
+ #if 0

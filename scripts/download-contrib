@@ -1,0 +1,70 @@
+#!/bin/bash
+#
+# Downloads external dependencies and applies patches
+#
+# Parameters:
+# - SOURCE_DIR: absolute path to Stampede source directory
+
+GALOIS_URL=http://iss.ices.utexas.edu/projects/galois/downloads/Galois-2.2.1.tar.gz
+GALOIS_SHA256=d98ffcc59ab433d7ef977c3862b1c73f7a0cdc75610ce5c2df8ee5ba296d5553
+TINYSTM_URL=http://tmware.org/sites/tmware.org/files/tinySTM/tinySTM-1.0.4.tgz
+TINYSTM_SHA256=84bcf1a4d98c443817b1d169b8509d8044126b3f96699adcd71c2f98ab2ae67c
+STAMP_URL=https://github.com/kozyraki/stamp
+STAMP_0910_COMMIT=9222e2707e598448d90112991a3a90544469d4b4 
+PARSEC_URL=http://parsec.cs.princeton.edu/download/2.1/parsec-2.1-core.tar.gz
+PARSEC_SHA256=9f31d7be8010d59931acc9e6fbe8a422b6df50f6c6d3711f2974c397fb0aeb68
+
+set -e
+
+SOURCE_DIR=${SOURCE_DIR:-/src}
+
+if [[ ! -e "${SOURCE_DIR}/Galois-2.2.1/.patched" ]]; then
+  (cd ${SOURCE_DIR} \
+   && curl -o data.tar.gz ${GALOIS_URL} \
+   && echo "${GALOIS_SHA256}  data.tar.gz" | sha256sum -c - \
+   && tar xzf data.tar.gz && rm data.tar.gz \
+   && patch -p0 < ${SOURCE_DIR}/patches/Galois-2.2.1.patch)
+fi
+
+if [[ ! -e "${SOURCE_DIR}/tinySTM-1.0.4/.patched" ]]; then
+  (cd ${SOURCE_DIR} \
+   && curl -o data.tar.gz ${TINYSTM_URL} \
+   && echo "${TINYSTM_SHA256}  data.tar.gz" | sha256sum -c - \
+   && tar xzf data.tar.gz && rm data.tar.gz \
+   && patch -p0 < ${SOURCE_DIR}/patches/tinySTM-1.0.4.patch)
+fi
+
+if [[ ! -e "${SOURCE_DIR}/benchmarks/parsec-2.1/.patched" ]]; then
+  (cd "${SOURCE_DIR}/benchmarks" \
+   && curl -o data.tar.gz ${PARSEC_URL} \
+   && echo "${PARSEC_SHA256}  data.tar.gz" | sha256sum -c - \
+   && tar xzf data.tar.gz && rm data.tar.gz \
+   && patch -p0 < ${SOURCE_DIR}/patches/parsec-2.1.patch)
+fi
+
+if [[ ! -e "${SOURCE_DIR}/benchmarks/stamp-0.9.10/.patched" ]]; then
+  (cd "${SOURCE_DIR}/benchmarks" \
+   && git clone https://github.com/kozyraki/stamp stamp-0.9.10 \
+   && cd stamp-0.9.10 && git checkout -b upstream ${STAMP_0910_COMMIT} && cd .. \
+   && gunzip stamp-0.9.10/yada/inputs/ttimeu1000000.2.ele.gz \
+   && gunzip stamp-0.9.10/yada/inputs/ttimeu1000000.2.node.gz \
+   && gunzip stamp-0.9.10/yada/inputs/ttimeu1000000.2.poly.gz \
+   && gunzip stamp-0.9.10/yada/inputs/633.2.ele.gz \
+   && gunzip stamp-0.9.10/yada/inputs/633.2.node.gz \
+   && gunzip stamp-0.9.10/yada/inputs/633.2.poly.gz \
+   && gunzip stamp-0.9.10/kmeans/inputs/random-n65536-d32-c16.txt.gz \
+   && gunzip stamp-0.9.10/kmeans/inputs/random-n2048-d16-c16.txt.gz \
+   && patch -p0 < ${SOURCE_DIR}/patches/stamp-0.9.10.patch)
+fi
+
+if [[ ! -e "${SOURCE_DIR}/benchmarks/stamp-grun/.patched2" ]]; then
+  (cd "${SOURCE_DIR}/benchmarks" \
+   && rsync -r --exclude inputs --exclude .git "${SOURCE_DIR}/benchmarks/stamp-0.9.10/" "${SOURCE_DIR}/benchmarks/stamp-grun/" \
+   && patch -p0 < ${SOURCE_DIR}/patches/stamp-grun.patch)
+fi
+
+if [[ ! -e "${SOURCE_DIR}/benchmarks/stamp-g/.patched2" ]]; then
+  (cd "${SOURCE_DIR}/benchmarks" \
+   && rsync -r --exclude inputs --exclude .git "${SOURCE_DIR}/benchmarks/stamp-0.9.10/" "${SOURCE_DIR}/benchmarks/stamp-g/" \
+   && patch -p0 < ${SOURCE_DIR}/patches/stamp-g.patch)
+fi

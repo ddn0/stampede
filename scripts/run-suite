@@ -1,0 +1,255 @@
+#!/usr/bin/env python
+#
+# Run sweep of experimental results
+
+import os
+import tempfile
+import subprocess
+import sys
+import optparse
+import re
+
+SBatchTemplate = \
+"""\
+#!/bin/bash -x
+#SBATCH -N 1
+#SBATCH -t 01:00:00
+#SBATCH -p pdebug
+#SBATCH -A science
+#SBATCH -o %(logDir)s/%(name)s-%%j
+export TM_REPORT_STAT_ENABLE="YES"
+export SE_REPORT_STAT_ENABLE="YES"
+export BG_MAPCOMMONHEAP=0
+export TM_STATISTICS=1
+export STM_STATS=1
+export BG_SPEC_SCRUB_CYCLE=%(scrubCycle)s
+%(commandLine)s
+"""
+
+CommandTableLarge = [{
+  'name': 'bayes',
+  'args': '-v32 -r4096 -n10 -p40 -i2 -e8 -s1',
+  'type': 'stamp'
+}, {
+  'name': 'genome',
+  'args': '-g16384 -s64 -n16777216',
+  'type': 'stamp'
+}, {
+  'name': 'intruder',
+  'args': '-a10 -l128 -n262144 -s1',
+  'type': 'stamp'
+}, {
+  'name': 'kmeans1',
+  'pname': 'kmeans',
+  'altThreads': '-p',
+  'args': '-m40 -n40 -t0.00001 -i %(inputsDir)s/kmeans/inputs/random-n65536-d32-c16.txt',
+  'type': 'stamp'
+}, {
+  'name': 'kmeans2',
+  'pname': 'kmeans',
+  'altThreads': '-p',
+  'args': '-m15 -n15 -t0.00001 -i %(inputsDir)s/kmeans/inputs/random-n65536-d32-c16.txt',
+  'type': 'stamp'
+}, {
+  'name': 'labyrinth',
+  'args': '-i %(inputsDir)s/labyrinth/inputs/random-x512-y512-z7-n512.txt',
+  'type': 'stamp'
+}, {
+  'name': 'ssca2',
+  'args': '-s20 -i1.0 -u1.0 -l3 -p3',
+  'type': 'stamp'
+}, {
+  'name': 'vacation1',
+  'pname': 'vacation',
+  'altThreads': '-c',
+  'args': '-n2 -q90 -u98 -r1048576 -t4194304',
+  'type': 'stamp'
+}, {
+  'name': 'vacation2',
+  'pname': 'vacation',
+  'altThreads': '-c',
+  'args': '-n4 -q60 -u90 -r1048576 -t4194304',
+  'type': 'stamp'
+}, {
+  'name': 'yada',
+  'args': '-a15 -i %(inputsDir)s/yada/ttimeu1000000.2',
+  'type': 'stamp'
+}]
+
+CommandTableSmall = [{
+  'name': 'bayes',
+  'args': '-v32 -r1024 -n2 -p20 -s0 -i2 -e2',
+  'type': 'stamp'
+}, {
+  'name': 'genome',
+  'args': '-g256 -s16 -n16384',
+  'type': 'stamp'
+}, {
+  'name': 'intruder',
+  'args': '-a10 -l4 -n2038 -s1',
+  'type': 'stamp'
+}, {
+  'name': 'kmeans1',
+  'pname': 'kmeans',
+  'altThreads': '-p',
+  'args': '-m40 -n40 -t0.05 -i %(inputsDir)s/kmeans/inputs/random-n2048-d16-c16.txt',
+  'type': 'stamp'
+}, {
+  'name': 'kmeans2',
+  'pname': 'kmeans',
+  'altThreads': '-p',
+  'args': '-m15 -n15 -t0.05 -i %(inputsDir)s/kmeans/inputs/random-n2048-d16-c16.txt',
+  'type': 'stamp'
+}, {
+  'name': 'labyrinth',
+  'args': '-i %(inputsDir)s/labyrinth/inputs/random-x32-y32-z3-n96.txt',
+  'type': 'stamp'
+}, {
+  'name': 'ssca2',
+  'args': '-s13 -i1.0 -u1.0 -l3 -p3',
+  'type': 'stamp'
+}, {
+  'name': 'vacation1',
+  'pname': 'vacation',
+  'altThreads': '-c',
+  'args': '-n2 -q90 -u98 -r16384 -t4096',
+  'type': 'stamp'
+}, {
+  'name': 'vacation2',
+  'pname': 'vacation',
+  'altThreads': '-c',
+  'args': '-n4 -q60 -u90 -r16384 -t4096',
+  'type': 'stamp'
+}, {
+  'name': 'yada',
+  'args': ' -a20 -i %(inputsDir)s/yada/inputs/633.2',
+  'type': 'stamp'
+}]
+
+def main():
+    parser = optparse.OptionParser()
+    parser.add_option('-t', '--max-threads', dest='maxThreads', default=1, help='maximum number of threads')
+    parser.add_option('--use-sbatch', dest='useSBatch', default=False, action='store_true', help='use sbatch to run benchmarks')
+    parser.add_option('-s', '--source-dir', dest='sourceDir', default='/src', help='path to stampede source directory')
+    parser.add_option('-i', '--inputs-dir', dest='inputsDir', default='', help='path to inputs (default: source-dir/benchmarks/stamp-0.9.10)')
+    parser.add_option('-r', '--run-dir', dest='runDir', default='.', help='path to run builds')
+    parser.add_option('--runpy', dest='runpy', default='', help='path to run.py (default: source-dir/scripts/run.py)')
+    parser.add_option('--log-dir', dest='logDir', default='', help='path to log dir for sbatch runs')
+    parser.add_option('--input-size', dest='inputSize', default='large', help='one of {small, large}')
+    (options, args) = parser.parse_args()
+
+    if not options.inputsDir:
+        options.inputsDir = os.path.join(options.sourceDir, 'benchmarks', 'stamp-0.9.10')
+    if not options.runpy:
+        options.runpy = os.path.join(options.sourceDir, 'scripts', 'run.py')
+
+    options.threads = [2**i for i in range(0, options.maxThreads)]
+    options.dirs = [d for d in os.listdir(options.runDir) if os.path.isdir(d) and os.path.basename(d).startswith('run-')]
+    options.filters = args
+
+    run(vars(options))
+
+
+def run(options):
+    commandTable = CommandTableLarge
+    if options['inputSize'] == 'small':
+        commandTable = CommandTableSmall
+
+    for command in commandTable:
+        for directory in options['dirs']:
+            kind = re.sub('^run-', '', os.path.basename(directory))
+            for variant in getVariants(command, kind):
+                for threads in getThreads(kind, options['threads']):
+                    for scrubCycle in getScrubCycles(command, kind):
+                        opts = options.copy()
+                        opts.update(command)
+
+                        opts['directory'] = directory
+                        opts['kind'] = kind
+                        opts['scrubCycle'] = scrubCycle
+                        opts['threads'] = threads
+                        opts['variant'] = variant
+
+                        opts['commandLine'] = getCommandLine(opts)
+
+
+                        if opts['filters']:
+                            if not any([re.search(f, opts['commandLine']) for f in opts['filters']]):
+                                continue
+
+                        if opts['useSBatch']:
+                            with tempfile.NamedTemporaryFile() as f:
+                                f.write(BaseTemplate % opts)
+                                # Would just f.close() but that deletes the temporary file
+                                f.flush()
+                                os.fsync(f)
+                                subprocess.check_call('sbatch %s' % f.name, shell=True, stderr=subprocess.STDOUT)
+                        else:
+                            subprocess.call(opts['commandLine'], shell=True, stderr=subprocess.STDOUT)
+
+
+def getCommandLine(opts):
+    t = opts.copy()
+    t['run'] = opts['runpy']
+    t['scrub'] = '-e ScrubCycle::BG_SPEC_SCRUB_CYCLE::%s' % opts['scrubCycle']
+    t['threads'] = '-t %d' % opts['threads']
+
+    if 'altThreads' in opts:
+        t['threads'] = '--no-default-thread -x Threads::%s::%s' % (opts['altThreads'], opts['threads'])
+    
+    name = opts['name']
+    if 'pname' in opts:
+      name = opts['pname']
+    
+    postfix = ''
+
+    if opts['variant'] == 'stamp-g':
+        postfix = 'g'
+    elif opts['variant'] == 'stamp-grun':
+        postfix = 'grun'
+
+    t['cmd'] = os.path.join(opts['directory'], "benchmarks", "bin", name+postfix)
+    if opts['useSBatch']:
+        t['srun'] = 'srun'
+        t['extra'] = ''
+    else:
+        t['srun'] = ''
+        t['extra'] = '--timeout 600 -e STM_STATS::STM_STATS::1'
+
+    t['args'] = opts['args'] % t
+    return '%(run)s --append-arguments %(extra)s %(threads)s %(scrub)s -- %(srun)s %(cmd)s %(args)s' % t
+
+
+def getVariants(command, kind):
+    if kind.startswith('tinystm'):
+        return ['stamp-g', 'stamp-grun']
+
+    if kind.startswith('htm'):
+        return ['stamp-0.9.10', 'stamp-grun', 'stamp-g']
+
+    if kind.startswith('xtm'):
+        if command['name'] in ['genome', 'kmeans1', 'kmeans2', 'labyrinth', 'ssca2']:
+            return ['stamp-0.9.10', 'stamp-grun']
+        return []
+
+    return ['stamp-0.9.10', 'stamp-g']
+
+
+def getScrubCycles(command, kind):
+  if kind.startswith('htm'):
+    if command['name'] == 'ssca2':
+      return ['12', '66']
+    else:
+      return ['66']
+  else:
+    return ['0']
+
+
+def getThreads(kind, threads):
+    if kind == 'seq':
+        return [1]
+    return threads
+
+
+if __name__ == '__main__':
+    main()

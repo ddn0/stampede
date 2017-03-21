@@ -1,0 +1,56 @@
+#!/bin/bash
+#
+# Configures the different builds to reproduce results in [nguyen17] in
+# the current directory.
+#
+# Parameters:
+# - SOURCE_DIR: path to Stampede source directory
+# - ENABLE_HTM: enable hardware transactional memory results
+#
+# Mapping build artifacts to [nguyen17]:
+#  run-htm/benchmarks/bin/*<no suffix>      STAMP+HTM
+#  run-htm/benchmarks/bin/*g                Stampede+HTM
+#  run-seq/benchmarks/bin/*<no suffix>      Sequential baseline
+#  run-stm/benchmarks/bin/*<no suffix>      STAMP+STM
+#  run-stm/benchmarks/bin/*g                Stampede+VXTM
+#  run-tinystm-nws-eager/benchmarks/bin/*g  Stampede+STM
+#  run-tinystm/benchmarks/bin/*g            Stampede+VTM
+#  run-xtm/benchmarks/bin/*<no suffix>      STAMP+XTM
+
+SOURCE_DIR="${SOURCE_DIR:-/src}"
+ENABLE_HTM="${ENABLE_HTM:-}"
+
+set -e
+
+if [[ ! -e /dev/cpuset ]]; then
+  EXTRA="-DUSE_HWTOPO=0"
+  echo ============================================================
+  echo WARNING disabling HWTOPO is not advised for performance runs
+  echo ============================================================
+fi
+
+if [[ -n "$ENABLE_HTM" ]]; then
+  mkdir -p run-htm \
+    && (cd run-htm \
+      && cmake ${SOURCE_DIR} -DUSE_HTM=1 ${EXTRA})
+fi
+
+mkdir -p run-seq \
+  && (cd run-seq \
+    && cmake ${SOURCE_DIR} ${EXTRA})
+
+mkdir -p run-stm \
+  && (cd run-stm \
+    && cmake ${SOURCE_DIR} -DUSE_STM=1 ${EXTRA})
+
+mkdir -p run-xtm \
+  && (cd run-xtm \
+    && cmake ${SOURCE_DIR} -DUSE_XTM=1 -DUSE_XTM_INLINE=1 ${EXTRA})
+
+mkdir -p run-tinystm \
+  && (cd run-tinystm \
+    && cmake ${SOURCE_DIR} -DUSE_STM=1 -DUSE_TINYSTM=1 ${EXTRA})
+
+mkdir -p run-tinystm-nws-eager \
+  && (cd run-tinystm-nws-eager \
+    && cmake ${SOURCE_DIR} -DUSE_STM=1 -DUSE_TINYSTM=1 -DUSE_NO_WORKSTEALING=1 -DUSE_ABORT_POLICY_EAGER=1 ${EXTRA})

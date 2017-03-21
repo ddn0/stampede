@@ -1,0 +1,11 @@
+#!/bin/bash
+diff -x .git -Naur Galois-2.2.1-prepatch Galois-2.2.1 > patches/Galois-2.2.1.patch
+diff -x .git -Naur tinySTM-1.0.4-prepatch tinySTM-1.0.4 > patches/tinySTM-1.0.4.patch
+(cd benchmarks \
+ && diff -x .git -Naur parsec-2.1-prepatch parsec-2.1 > ../patches/parsec-2.1.patch)
+(cd benchmarks \
+ && diff -x .git -x inputs -Naur stamp-0.9.10-prepatch stamp-0.9.10 > ../patches/stamp-0.9.10.patch)
+(cd benchmarks \
+ && diff -x .git -x inputs -Naur stamp-0.9.10 stamp-grun > ../patches/stamp-grun.patch)
+(cd benchmarks \
+ && diff -x .git -x inputs -Naur stamp-0.9.10 stamp-g > ../patches/stamp-g.patch)
