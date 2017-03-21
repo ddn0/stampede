@@ -1,0 +1,15 @@
+#!/bin/bash
+#
+# Make release tarball.
+#
+# Parameters:
+# - SOURCE_DIR: path to Stampede source directory
+# - VERSION: release versoin
+
+VERSION="${VERSION:-0.5}"
+SOURCE_DIR="${SOURCE_DIR:-/src}"
+
+set -e
+
+cd ${SOURCE_DIR} \
+ && tar --transform "s|^|stampede-${VERSION}/|" -czf stampede-${VERSION}.tar.gz $(git ls-files)
