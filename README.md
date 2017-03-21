@@ -6,7 +6,7 @@ available in [nguyen17].
 
 [nguyen17] Donald Nguyen and Keshav Pingali. "What Scalable Programs Need from
 Transactional Memory." In ASPLOS 2017.
-[preprint](https://github.com/ddn0/stampede/blob/master/docs/nguyen17.pdf)
+[(preprint)](https://github.com/ddn0/stampede/blob/master/docs/nguyen17.pdf)
 
 Basic configuration:
 
